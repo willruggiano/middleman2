@@ -2109,11 +2109,12 @@ func (s *Syncer) fetchMRDetail(
 	if err := s.refreshTimeline(
 		ctx, repo, repoID, mrID, fullPR,
 	); err != nil {
-		// Timeline = 4 calls (comments + reviews + commits + force-push).
-		calls += 4
+		// Timeline = 5 calls: comments, reviews, review comments, commits,
+		// force-push.
+		calls += 5
 		return calls, err
 	}
-	calls += 4
+	calls += 5
 
 	ciHeadSHA := ""
 	if fullPR.GetHead() != nil {
@@ -2264,6 +2265,18 @@ func (s *Syncer) refreshTimeline(
 		return fmt.Errorf("list reviews for MR #%d: %w", number, err)
 	}
 
+	reviewComments, err := client.ListReviewComments(ctx, repo.Owner, repo.Name, number)
+	if err != nil {
+		// Treat review comments like force-push events: log and continue so a
+		// flake on this endpoint doesn't nuke the rest of the timeline.
+		slog.Warn("review-comment fetch failed during timeline refresh",
+			"repo", repo.Owner+"/"+repo.Name,
+			"number", number,
+			"err", err,
+		)
+		reviewComments = nil
+	}
+
 	commits, err := client.ListCommits(ctx, repo.Owner, repo.Name, number)
 	if err != nil {
 		return fmt.Errorf("list commits for MR #%d: %w", number, err)
@@ -2285,6 +2298,9 @@ func (s *Syncer) refreshTimeline(
 	}
 	for _, r := range reviews {
 		events = append(events, NormalizeReviewEvent(mrID, r))
+	}
+	for _, c := range reviewComments {
+		events = append(events, NormalizeReviewCommentEvent(mrID, c))
 	}
 	for _, c := range commits {
 		events = append(events, NormalizeCommitEvent(mrID, c))

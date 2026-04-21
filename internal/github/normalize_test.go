@@ -232,6 +232,70 @@ func TestNormalizeCommentEvent(t *testing.T) {
 	assert.True(event.CreatedAt.Equal(now))
 }
 
+func TestNormalizeReviewCommentEvent(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	c := &gh.PullRequestComment{
+		ID:                  new(int64(4242)),
+		User:                &gh.User{Login: new("dora")},
+		Body:                new("nit: rename this"),
+		Path:                new("cmd/middleman/main.go"),
+		Line:                new(42),
+		StartLine:           new(40),
+		Side:                new("RIGHT"),
+		DiffHunk:            new("@@ -40,3 +40,3 @@"),
+		CommitID:            new("abc1234"),
+		InReplyTo:           new(int64(9999)),
+		PullRequestReviewID: new(int64(8888)),
+		HTMLURL:             new("https://github.com/acme/widget/pull/1#discussion_r4242"),
+		SubjectType:         new("LINE"),
+		CreatedAt:           ghTimestamp(now),
+	}
+
+	event := NormalizeReviewCommentEvent(10, c)
+
+	assert.Equal(int64(10), event.MergeRequestID)
+	assert.Equal("review_comment", event.EventType)
+	assert.Equal("review-comment-4242", event.DedupeKey)
+	assert.Equal("dora", event.Author)
+	assert.Equal("nit: rename this", event.Body)
+	assert.Equal("cmd/middleman/main.go", event.Summary)
+	require.NotNil(event.PlatformID)
+	assert.Equal(int64(4242), *event.PlatformID)
+	assert.True(event.CreatedAt.Equal(now))
+
+	assert.Contains(event.MetadataJSON, `"path":"cmd/middleman/main.go"`)
+	assert.Contains(event.MetadataJSON, `"line":42`)
+	assert.Contains(event.MetadataJSON, `"start_line":40`)
+	assert.Contains(event.MetadataJSON, `"side":"RIGHT"`)
+	assert.Contains(event.MetadataJSON, `"in_reply_to":9999`)
+	assert.Contains(event.MetadataJSON, `"review_id":8888`)
+	assert.Contains(event.MetadataJSON, `"html_url":"https://github.com/acme/widget/pull/1#discussion_r4242"`)
+}
+
+func TestNormalizeReviewCommentEvent_FallsBackToOriginalLine(t *testing.T) {
+	assert := Assert.New(t)
+
+	// Outdated comments — the line has shifted out from under them so GitHub
+	// clears Line/StartLine/CommitID and keeps only the Original* fields.
+	c := &gh.PullRequestComment{
+		ID:                new(int64(1)),
+		User:              &gh.User{Login: new("eve")},
+		Body:              new("stale"),
+		Path:              new("a.go"),
+		OriginalLine:      new(10),
+		OriginalStartLine: new(8),
+		OriginalCommitID:  new("old-sha"),
+	}
+
+	event := NormalizeReviewCommentEvent(10, c)
+	assert.Contains(event.MetadataJSON, `"line":10`)
+	assert.Contains(event.MetadataJSON, `"start_line":8`)
+	assert.Contains(event.MetadataJSON, `"commit_id":"old-sha"`)
+}
+
 func TestNormalizeForcePushEvent(t *testing.T) {
 	require := require.New(t)
 	createdAt := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)

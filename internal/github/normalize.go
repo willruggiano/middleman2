@@ -100,6 +100,70 @@ func NormalizeCommentEvent(mrID int64, c *gh.IssueComment) db.MREvent {
 	return event
 }
 
+// reviewCommentMetadata is stored as MREvent.MetadataJSON for review_comment
+// events, giving the UI enough context to render the file/line the comment
+// was left on and to group replies.
+type reviewCommentMetadata struct {
+	Path        string `json:"path,omitempty"`
+	Line        int    `json:"line,omitempty"`
+	StartLine   int    `json:"start_line,omitempty"`
+	Side        string `json:"side,omitempty"`
+	DiffHunk    string `json:"diff_hunk,omitempty"`
+	CommitID    string `json:"commit_id,omitempty"`
+	InReplyTo   int64  `json:"in_reply_to,omitempty"`
+	ReviewID    int64  `json:"review_id,omitempty"`
+	HTMLURL     string `json:"html_url,omitempty"`
+	SubjectType string `json:"subject_type,omitempty"`
+}
+
+// NormalizeReviewCommentEvent converts a GitHub PullRequestComment (an inline
+// review comment attached to a specific line of code) to a db.MREvent.
+func NormalizeReviewCommentEvent(mrID int64, c *gh.PullRequestComment) db.MREvent {
+	event := db.MREvent{
+		MergeRequestID: mrID,
+		EventType:      "review_comment",
+		DedupeKey:      fmt.Sprintf("review-comment-%d", c.GetID()),
+		Author:         loginOrEmpty(c.GetUser()),
+		Body:           c.GetBody(),
+		Summary:        c.GetPath(),
+	}
+	ghID := c.GetID()
+	event.PlatformID = &ghID
+	if c.CreatedAt != nil {
+		event.CreatedAt = c.CreatedAt.Time
+	}
+
+	// Prefer the current Line when the comment is still anchored to a live
+	// line; fall back to the original line captured at comment time.
+	line := c.GetLine()
+	if line == 0 {
+		line = c.GetOriginalLine()
+	}
+	startLine := c.GetStartLine()
+	if startLine == 0 {
+		startLine = c.GetOriginalStartLine()
+	}
+	commitID := c.GetCommitID()
+	if commitID == "" {
+		commitID = c.GetOriginalCommitID()
+	}
+
+	metadata, _ := json.Marshal(reviewCommentMetadata{
+		Path:        c.GetPath(),
+		Line:        line,
+		StartLine:   startLine,
+		Side:        c.GetSide(),
+		DiffHunk:    c.GetDiffHunk(),
+		CommitID:    commitID,
+		InReplyTo:   c.GetInReplyTo(),
+		ReviewID:    c.GetPullRequestReviewID(),
+		HTMLURL:     sanitizeURL(c.GetHTMLURL()),
+		SubjectType: c.GetSubjectType(),
+	})
+	event.MetadataJSON = string(metadata)
+	return event
+}
+
 // NormalizeReviewEvent converts a GitHub PullRequestReview to a db.MREvent.
 func NormalizeReviewEvent(mrID int64, r *gh.PullRequestReview) db.MREvent {
 	event := db.MREvent{

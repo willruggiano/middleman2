@@ -111,6 +111,12 @@ func (m *mockGH) ListReviews(
 	return nil, nil
 }
 
+func (m *mockGH) ListReviewComments(
+	_ context.Context, _, _ string, _ int,
+) ([]*gh.PullRequestComment, error) {
+	return nil, nil
+}
+
 func (m *mockGH) ListCommits(
 	_ context.Context, _, _ string, _ int,
 ) ([]*gh.RepositoryCommit, error) {

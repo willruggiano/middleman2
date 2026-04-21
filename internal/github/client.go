@@ -40,6 +40,7 @@ type Client interface {
 	GetIssue(ctx context.Context, owner, repo string, number int) (*gh.Issue, error)
 	ListIssueComments(ctx context.Context, owner, repo string, number int) ([]*gh.IssueComment, error)
 	ListReviews(ctx context.Context, owner, repo string, number int) ([]*gh.PullRequestReview, error)
+	ListReviewComments(ctx context.Context, owner, repo string, number int) ([]*gh.PullRequestComment, error)
 	ListCommits(ctx context.Context, owner, repo string, number int) ([]*gh.RepositoryCommit, error)
 	ListForcePushEvents(ctx context.Context, owner, repo string, number int) ([]ForcePushEvent, error)
 	GetCombinedStatus(ctx context.Context, owner, repo, ref string) (*gh.CombinedStatus, error)
@@ -458,6 +459,26 @@ func (c *liveClient) ListReviews(
 		page, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, number, opts)
 		if err != nil {
 			return nil, nil, fmt.Errorf("listing reviews for %s/%s#%d: %w", owner, repo, number, err)
+		}
+		return page, resp, nil
+	}, c.trackRate)
+	if err != nil {
+		return nil, err
+	}
+	return all, nil
+}
+
+func (c *liveClient) ListReviewComments(
+	ctx context.Context, owner, repo string, number int,
+) ([]*gh.PullRequestComment, error) {
+	opts := &gh.PullRequestListCommentsOptions{
+		ListOptions: gh.ListOptions{PerPage: 100},
+	}
+	all, err := collectPages(ctx, func(pageOpts *gh.ListOptions) ([]*gh.PullRequestComment, *gh.Response, error) {
+		opts.ListOptions = *pageOpts
+		page, resp, err := c.gh.PullRequests.ListComments(ctx, owner, repo, number, opts)
+		if err != nil {
+			return nil, nil, fmt.Errorf("listing review comments for %s/%s#%d: %w", owner, repo, number, err)
 		}
 		return page, resp, nil
 	}, c.trackRate)

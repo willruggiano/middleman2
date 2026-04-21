@@ -199,6 +199,13 @@ func (c *FixtureClient) ListReviews(
 	return nil, nil
 }
 
+// ListReviewComments returns nil (read-only stub).
+func (c *FixtureClient) ListReviewComments(
+	_ context.Context, _, _ string, _ int,
+) ([]*gh.PullRequestComment, error) {
+	return nil, nil
+}
+
 // ListCommits returns nil (read-only stub).
 func (c *FixtureClient) ListCommits(
 	_ context.Context, _, _ string, _ int,

@@ -59,6 +59,8 @@ type mockClient struct {
 	listIssuesPageFn        func(context.Context, string, string, string, int) ([]*gh.Issue, bool, error)
 	comments                []*gh.IssueComment
 	reviews                 []*gh.PullRequestReview
+	reviewComments          []*gh.PullRequestComment
+	reviewCommentsErr       error
 	commits                 []*gh.RepositoryCommit
 	forcePushEvents         []ForcePushEvent
 	forcePushEventsErr      error
@@ -165,6 +167,14 @@ func (m *mockClient) ListIssueComments(_ context.Context, _, _ string, _ int) ([
 func (m *mockClient) ListReviews(_ context.Context, _, _ string, _ int) ([]*gh.PullRequestReview, error) {
 	m.trackCall()
 	return m.reviews, nil
+}
+
+func (m *mockClient) ListReviewComments(_ context.Context, _, _ string, _ int) ([]*gh.PullRequestComment, error) {
+	m.trackCall()
+	if m.reviewCommentsErr != nil {
+		return nil, m.reviewCommentsErr
+	}
+	return m.reviewComments, nil
 }
 
 func (m *mockClient) ListCommits(_ context.Context, _, _ string, _ int) ([]*gh.RepositoryCommit, error) {
@@ -490,6 +500,80 @@ func TestSyncStoresForcePushEvent(t *testing.T) {
 	assert.Equal("alice", forcePush.Author)
 	assert.Equal("aaaaaaa -> bbbbbbb", forcePush.Summary)
 	assert.Contains(forcePush.MetadataJSON, `"ref":"feature"`)
+}
+
+func TestSyncStoresReviewCommentEvent(t *testing.T) {
+	assert := Assert.New(t)
+	require := require.New(t)
+	ctx := context.Background()
+	d := openTestDB(t)
+	now := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	mc := &mockClient{
+		openPRs:  []*gh.PullRequest{buildOpenPR(1, now)},
+		comments: []*gh.IssueComment{},
+		reviews:  []*gh.PullRequestReview{},
+		commits:  []*gh.RepositoryCommit{},
+		reviewComments: []*gh.PullRequestComment{{
+			ID:                  new(int64(7001)),
+			User:                &gh.User{Login: new("bob")},
+			Body:                new("this branch is unreachable"),
+			Path:                new("cmd/middleman/main.go"),
+			Line:                new(120),
+			Side:                new("RIGHT"),
+			DiffHunk:            new("@@ -118,5 +118,5 @@"),
+			CommitID:            new("deadbeef"),
+			PullRequestReviewID: new(int64(42)),
+			HTMLURL:             new("https://github.com/owner/repo/pull/1#discussion_r7001"),
+			CreatedAt:           ghTimestamp(now.Add(-10 * time.Minute)),
+		}},
+	}
+
+	syncer := NewSyncer(map[string]Client{"github.com": mc}, d, nil, []RepoRef{{Owner: "owner", Name: "repo", PlatformHost: "github.com"}}, time.Minute, nil, testBudget(500))
+	syncer.RunOnce(ctx)
+
+	pr, err := d.GetMergeRequest(ctx, "owner", "repo", 1)
+	require.NoError(err)
+	require.NotNil(pr)
+
+	events, err := d.ListMREvents(ctx, pr.ID)
+	require.NoError(err)
+
+	var rc *db.MREvent
+	for i := range events {
+		if events[i].EventType == "review_comment" {
+			rc = &events[i]
+			break
+		}
+	}
+	require.NotNil(rc, "expected a review_comment event")
+	assert.Equal("bob", rc.Author)
+	assert.Equal("this branch is unreachable", rc.Body)
+	assert.Equal("cmd/middleman/main.go", rc.Summary)
+	assert.Contains(rc.MetadataJSON, `"line":120`)
+	assert.Contains(rc.MetadataJSON, `"review_id":42`)
+}
+
+func TestSyncIgnoresReviewCommentFetchFailures(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	d := openTestDB(t)
+	now := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	mc := &mockClient{
+		openPRs:           []*gh.PullRequest{buildOpenPR(1, now)},
+		comments:          []*gh.IssueComment{},
+		reviews:           []*gh.PullRequestReview{},
+		commits:           []*gh.RepositoryCommit{},
+		reviewCommentsErr: errors.New("transient GitHub hiccup"),
+	}
+
+	syncer := NewSyncer(map[string]Client{"github.com": mc}, d, nil, []RepoRef{{Owner: "owner", Name: "repo", PlatformHost: "github.com"}}, time.Minute, nil, testBudget(500))
+	syncer.RunOnce(ctx)
+
+	pr, err := d.GetMergeRequest(ctx, "owner", "repo", 1)
+	require.NoError(err)
+	require.NotNil(pr, "sync should continue even when review-comment fetch fails")
 }
 
 func TestSyncStoresPRLabels(t *testing.T) {
@@ -3833,6 +3917,10 @@ func (m *partialFailureMock) ListReviews(_ context.Context, _, _ string, _ int) 
 		return nil, m.listReviewsErr
 	}
 	return m.reviews, nil
+}
+
+func (m *partialFailureMock) ListReviewComments(_ context.Context, _, _ string, _ int) ([]*gh.PullRequestComment, error) {
+	return nil, nil
 }
 
 func (m *partialFailureMock) GetIssue(ctx context.Context, owner, repo string, number int) (*gh.Issue, error) {

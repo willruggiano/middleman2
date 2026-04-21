@@ -32,6 +32,32 @@
     return eventType === "issue_comment" || eventType === "review" || eventType === "review_comment";
   }
 
+  interface ReviewCommentMeta {
+    path?: string;
+    line?: number;
+    start_line?: number;
+    side?: string;
+    in_reply_to?: number;
+  }
+
+  function parseReviewCommentMeta(metadataJSON: string): ReviewCommentMeta | null {
+    if (!metadataJSON) return null;
+    try {
+      return JSON.parse(metadataJSON) as ReviewCommentMeta;
+    } catch {
+      return null;
+    }
+  }
+
+  function reviewCommentLocation(meta: ReviewCommentMeta | null): string {
+    if (!meta?.path) return "";
+    if (meta.start_line && meta.line && meta.start_line !== meta.line) {
+      return `${meta.path}:${meta.start_line}-${meta.line}`;
+    }
+    if (meta.line) return `${meta.path}:${meta.line}`;
+    return meta.path;
+  }
+
   let copiedId = $state<string | null>(null);
   let copyTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -76,6 +102,18 @@
           </div>
           {#if event.Summary && (event.EventType === "commit" || event.EventType === "force_push")}
             <p class="event-summary">{event.Summary}</p>
+          {/if}
+          {#if event.EventType === "review_comment"}
+            {@const meta = parseReviewCommentMeta(event.MetadataJSON)}
+            {@const location = reviewCommentLocation(meta)}
+            {#if location}
+              <p class="event-summary">
+                {#if meta?.in_reply_to}
+                  <span class="reply-indicator">Reply</span>
+                {/if}
+                {location}
+              </p>
+            {/if}
           {/if}
           {#if event.Body}
             <div class="event-body-wrap">
@@ -205,6 +243,20 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .reply-indicator {
+    display: inline-block;
+    padding: 0 4px;
+    margin-right: 4px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-inset);
+    color: var(--text-muted);
+    font-family: var(--font-primary, inherit);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
 
   /* Body wrap for copy button positioning */
