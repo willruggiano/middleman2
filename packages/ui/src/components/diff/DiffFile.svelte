@@ -99,6 +99,8 @@
 
   // openAsk: key "line:side" of a line with an open Ask composer.
   let openAsk = $state<string | null>(null);
+  let askError = $state<string | null>(null);
+  let askSubmitting = $state(false);
   // selectionSnapshot captures the text selected at the moment Ask
   // was clicked, so the reviewer can keep typing without worrying
   // about losing the selection.
@@ -110,26 +112,53 @@
       : "";
     selectionSnapshot = selText.trim() || null;
     openAsk = `${line}:${side}`;
+    askError = null;
   }
 
   function closeAsk(): void {
     openAsk = null;
     selectionSnapshot = null;
+    askError = null;
+    askSubmitting = false;
   }
 
   async function submitAsk(line: number, side: "LEFT" | "RIGHT", question: string): Promise<void> {
-    const commitSha = currentCommitSha();
-    if (!commitSha) return;
-    const body: Parameters<typeof aiStore.createThread>[0] = {
-      path: file.path,
-      anchor_side: side,
-      anchor_line: line,
-      commit_sha: commitSha,
-      question,
-    };
-    if (selectionSnapshot) body.selection_text = selectionSnapshot;
-    await aiStore.createThread(body);
-    closeAsk();
+    if (askSubmitting) return;
+    askSubmitting = true;
+    askError = null;
+
+    try {
+      // Commits back the anchor SHA. If they haven't been loaded yet
+      // (reviewer never expanded the Commits panel), load them now so
+      // we can attach a valid commit_sha to the request.
+      let commitSha = currentCommitSha();
+      if (!commitSha) {
+        await diffStore.loadCommits();
+        commitSha = currentCommitSha();
+      }
+      if (!commitSha) {
+        askError = "Can't ask yet — commits haven't loaded for this PR.";
+        return;
+      }
+
+      const body: Parameters<typeof aiStore.createThread>[0] = {
+        path: file.path,
+        anchor_side: side,
+        anchor_line: line,
+        commit_sha: commitSha,
+        question,
+      };
+      if (selectionSnapshot) body.selection_text = selectionSnapshot;
+
+      const result = await aiStore.createThread(body);
+      if (!result.ok) {
+        askError = result.error;
+        return;
+      }
+      closeAsk();
+    } finally {
+      askSubmitting = false;
+    }
   }
 
   function getAIThreadsAtAnchor(line: number, side: "LEFT" | "RIGHT") {
@@ -464,6 +493,8 @@
                 {#if leftKey && openAsk === leftKey && leftAnchor}
                   <AIAskComposer
                     {...(selectionSnapshot ? { selectionPreview: selectionSnapshot } : {})}
+                    error={askError}
+                    submitting={askSubmitting}
                     onsubmit={(q) => void submitAsk(leftAnchor.line, leftAnchor.side, q)}
                     oncancel={closeAsk}
                   />
@@ -471,6 +502,8 @@
                 {#if rightKey && openAsk === rightKey && rightAnchor}
                   <AIAskComposer
                     {...(selectionSnapshot ? { selectionPreview: selectionSnapshot } : {})}
+                    error={askError}
+                    submitting={askSubmitting}
                     onsubmit={(q) => void submitAsk(rightAnchor.line, rightAnchor.side, q)}
                     oncancel={closeAsk}
                   />
@@ -556,6 +589,8 @@
                 {#if anchorKey && openAsk === anchorKey && anchor}
                   <AIAskComposer
                     {...(selectionSnapshot ? { selectionPreview: selectionSnapshot } : {})}
+                    error={askError}
+                    submitting={askSubmitting}
                     onsubmit={(q) => void submitAsk(anchor.line, anchor.side, q)}
                     oncancel={closeAsk}
                   />

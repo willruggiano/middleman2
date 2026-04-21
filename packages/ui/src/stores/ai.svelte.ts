@@ -83,20 +83,34 @@ export function createAIStore(opts?: AIStoreOptions) {
     commit_sha: string;
     question: string;
     prompt_context?: string;
-  }): Promise<{ thread: AIThread; question: AIQuestion } | null> {
+  }): Promise<
+    | { ok: true; thread: AIThread; question: AIQuestion }
+    | { ok: false; error: string }
+  > {
     try {
       const res = await fetch(`${prefix()}/ai-threads`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(input),
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        // Huma returns { detail: "..." } on structured errors; fall
+        // back to raw status text for anything else.
+        let msg = `${res.status} ${res.statusText}`;
+        try {
+          const data = (await res.json()) as { detail?: string };
+          if (data?.detail) msg = data.detail;
+        } catch {
+          /* ignore */
+        }
+        return { ok: false, error: msg };
+      }
       const data = (await res.json()) as { thread: AIThread; question: AIQuestion };
       threads = [...threads, data.thread];
       questions = [...questions, data.question];
-      return data;
-    } catch {
-      return null;
+      return { ok: true, thread: data.thread, question: data.question };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 

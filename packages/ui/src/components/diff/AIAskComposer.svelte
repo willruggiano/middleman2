@@ -1,11 +1,19 @@
 <script lang="ts">
   interface Props {
     selectionPreview?: string;
+    error?: string | null;
+    submitting?: boolean;
     onsubmit: (question: string) => void;
     oncancel: () => void;
   }
 
-  const { selectionPreview, onsubmit, oncancel }: Props = $props();
+  const {
+    selectionPreview,
+    error = null,
+    submitting = false,
+    onsubmit,
+    oncancel,
+  }: Props = $props();
 
   let value = $state("");
   let textareaEl: HTMLTextAreaElement | undefined = $state();
@@ -47,16 +55,19 @@
     placeholder="Ask a question about this code... (⌘/Ctrl+Enter to send, Esc to cancel)"
     onkeydown={onKeydown}
   ></textarea>
+  {#if error}
+    <div class="ai-ask__error">{error}</div>
+  {/if}
   <div class="ai-ask__actions">
     <button
       type="button"
       class="ai-ask__btn ai-ask__btn--primary"
-      disabled={!value.trim()}
+      disabled={!value.trim() || submitting}
       onclick={() => onsubmit(value.trim())}
     >
-      Ask
+      {submitting ? "Asking..." : "Ask"}
     </button>
-    <button type="button" class="ai-ask__btn" onclick={oncancel}>Cancel</button>
+    <button type="button" class="ai-ask__btn" disabled={submitting} onclick={oncancel}>Cancel</button>
   </div>
 </div>
 
@@ -148,5 +159,19 @@
   .ai-ask__btn--primary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .ai-ask__btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .ai-ask__error {
+    margin-top: 6px;
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--accent-red) 8%, var(--bg-inset));
+    color: var(--accent-red);
+    font-size: 12px;
   }
 </style>
