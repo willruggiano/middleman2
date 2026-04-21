@@ -420,6 +420,14 @@ func (s *Server) registerAPI(api huma.API) {
 		Path:          "/repos/{owner}/{name}/pulls/{number}/ai-threads/{thread_id}/questions/{question_id}",
 		DefaultStatus: http.StatusNoContent,
 	}, s.deleteAIQuestion)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/ai-brief", s.createAIBrief)
+	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/ai-brief", s.getAIBrief)
+	huma.Register(api, huma.Operation{
+		OperationID:   "delete-ai-brief",
+		Method:        http.MethodDelete,
+		Path:          "/repos/{owner}/{name}/pulls/{number}/ai-brief",
+		DefaultStatus: http.StatusNoContent,
+	}, s.deleteAIBrief)
 	huma.Get(api, "/stacks", s.listStacks)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/stack", s.getStackForPR)
 

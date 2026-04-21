@@ -223,6 +223,24 @@ export interface paths {
         patch: operations["edit-pr-content"];
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/ai-brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number ai brief */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-ai-brief"];
+        put?: never;
+        /** Post repos by owner by name pulls by number ai brief */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-ai-brief"];
+        delete: operations["delete-ai-brief"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/ai-threads": {
         parameters: {
             query?: never;
@@ -676,6 +694,30 @@ export interface components {
             readonly $schema?: string;
             question: string;
         };
+        AiBriefResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AiBriefResponse.json
+             */
+            readonly $schema?: string;
+            claude_session_id?: string;
+            /** Format: date-time */
+            completed_at?: string;
+            content: string;
+            /** Format: date-time */
+            created_at: string;
+            depth: string;
+            error?: string;
+            head_sha: string;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            mr_id: number;
+            /** Format: date-time */
+            started_at?: string;
+            status: string;
+        };
         AiQuestionResponse: {
             /**
              * Format: uri
@@ -838,6 +880,16 @@ export interface components {
             question: string;
             /** @description Text the reviewer selected */
             selection_text?: string;
+        };
+        CreateBriefInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CreateBriefInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description quick (default) or deep */
+            depth?: string;
         };
         CreateWorkspaceInputBody: {
             /**
@@ -2013,6 +2065,107 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["MergeRequestDetailResponse"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-ai-brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiBriefResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-ai-brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBriefInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiBriefResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-ai-brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

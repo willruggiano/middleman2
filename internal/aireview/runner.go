@@ -54,8 +54,9 @@ type Runner struct {
 	// by the sync engine.
 	hostFor func(owner, name string) string
 
-	mu      sync.Mutex
-	running map[int64]context.CancelFunc // questionID -> cancel
+	mu            sync.Mutex
+	running       map[int64]context.CancelFunc // questionID -> cancel
+	briefsRunning map[int64]context.CancelFunc // briefID -> cancel
 }
 
 // RunnerConfig holds dependencies for a Runner.
@@ -68,23 +69,31 @@ type RunnerConfig struct {
 
 func New(cfg RunnerConfig) *Runner {
 	return &Runner{
-		db:      cfg.DB,
-		clones:  cfg.Clones,
-		rootDir: cfg.WorktreeDir,
-		hostFor: cfg.HostFor,
-		running: make(map[int64]context.CancelFunc),
+		db:            cfg.DB,
+		clones:        cfg.Clones,
+		rootDir:       cfg.WorktreeDir,
+		hostFor:       cfg.HostFor,
+		running:       make(map[int64]context.CancelFunc),
+		briefsRunning: make(map[int64]context.CancelFunc),
 	}
 }
 
-// ReconcileOnStartup marks any leftover queued/running questions as
-// failed. Their subprocesses didn't survive a restart.
+// ReconcileOnStartup marks any leftover queued/running questions
+// and briefs as failed. Their subprocesses didn't survive a restart.
 func (r *Runner) ReconcileOnStartup(ctx context.Context) error {
-	orphans, err := r.db.GetRunningAIQuestions(ctx)
+	orphanQs, err := r.db.GetRunningAIQuestions(ctx)
 	if err != nil {
 		return fmt.Errorf("list running questions: %w", err)
 	}
-	for _, q := range orphans {
+	for _, q := range orphanQs {
 		_ = r.db.MarkAIQuestionFailed(ctx, q.ID, "interrupted by middleman restart")
+	}
+	orphanBriefs, err := r.db.GetRunningAIBriefs(ctx)
+	if err != nil {
+		return fmt.Errorf("list running briefs: %w", err)
+	}
+	for _, b := range orphanBriefs {
+		_ = r.db.MarkAIBriefFailed(ctx, b.ID, "interrupted by middleman restart")
 	}
 	return nil
 }
@@ -415,6 +424,216 @@ type claudeResult struct {
 type Citation struct {
 	File string `json:"file"`
 	Line int    `json:"line"`
+}
+
+// --- PR-level "brief" ---
+
+// BriefInput describes what the brief should be generated against.
+// The caller is responsible for passing the current PR head SHA so
+// the brief row is keyed correctly; regeneration after a push uses
+// a fresh head_sha and therefore a new row.
+type BriefInput struct {
+	MergeRequestID int64
+	Owner          string
+	Name           string
+	HeadSHA        string
+	Depth          string // "quick" or "deep"
+	// PromptContext gets appended to the prompt — the PR title/
+	// branches/body so Claude has some framing beyond the diff.
+	PromptContext string
+}
+
+// CreateBrief queues a new brief, spawns Claude asynchronously, and
+// returns the inserted row. The row transitions to running → done
+// (or failed) in the background. Callers poll GetAIBrief to see
+// progress.
+func (r *Runner) CreateBrief(ctx context.Context, in BriefInput) (db.AIBrief, error) {
+	if r.clones == nil {
+		return db.AIBrief{}, errors.New("clone manager not configured")
+	}
+	if in.HeadSHA == "" {
+		return db.AIBrief{}, errors.New("head SHA required")
+	}
+	depth := in.Depth
+	if depth != "quick" && depth != "deep" {
+		depth = "quick"
+	}
+
+	brief, err := r.db.UpsertAIBriefQueued(ctx, in.MergeRequestID, in.HeadSHA, depth)
+	if err != nil {
+		return db.AIBrief{}, err
+	}
+
+	worktree, err := r.provisionWorktree(ctx, in.Owner, in.Name, in.HeadSHA, briefWorktreeKey(brief.ID))
+	if err != nil {
+		_ = r.db.MarkAIBriefFailed(ctx, brief.ID, "provision worktree: "+err.Error())
+		return db.AIBrief{}, fmt.Errorf("provision worktree: %w", err)
+	}
+
+	r.spawnBrief(brief, worktree, in)
+	brief.WorktreePath = &worktree
+	return brief, nil
+}
+
+func (r *Runner) CancelBrief(ctx context.Context, id int64) error {
+	r.mu.Lock()
+	cancel, ok := r.briefsRunning[id]
+	r.mu.Unlock()
+	if ok {
+		cancel()
+	}
+	return r.db.MarkAIBriefCancelled(ctx, id)
+}
+
+func (r *Runner) DeleteBrief(ctx context.Context, id int64) error {
+	// Cancel any in-flight subprocess first.
+	_ = r.CancelBrief(ctx, id)
+	// Remove the worktree best-effort.
+	brief, err := r.db.GetAIBrief(ctx, id)
+	if err == nil && brief.WorktreePath != nil && *brief.WorktreePath != "" {
+		r.removeWorktree(ctx, "", "", *brief.WorktreePath)
+	}
+	return r.db.DeleteAIBrief(ctx, id)
+}
+
+// briefWorktreeKey keeps brief worktrees in a distinct subdirectory
+// so they don't collide with thread worktrees (which key on thread
+// id only).
+func briefWorktreeKey(briefID int64) int64 {
+	// Offset by 1e9 to ensure no collision with thread IDs when they
+	// share a common root. Simple scheme; DB IDs on a personal
+	// middleman instance will never approach that range.
+	return 1_000_000_000 + briefID
+}
+
+func (r *Runner) spawnBrief(brief db.AIBrief, worktreePath string, in BriefInput) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r.mu.Lock()
+	r.briefsRunning[brief.ID] = cancel
+	r.mu.Unlock()
+
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			delete(r.briefsRunning, brief.ID)
+			r.mu.Unlock()
+			cancel()
+		}()
+		r.runBrief(ctx, brief, worktreePath, in)
+	}()
+}
+
+func (r *Runner) runBrief(ctx context.Context, brief db.AIBrief, worktreePath string, in BriefInput) {
+	prompt := buildBriefPrompt(in)
+
+	// Brief uses the same restricted tool set as Q&A. Deep mode gets
+	// the same tools — the difference is time budget / prompt wording,
+	// not tool access.
+	args := []string{
+		"-p", prompt,
+		"--output-format", "json",
+		"--permission-mode", "bypassPermissions",
+		"--allowedTools", "Read,Glob,Grep",
+		"--disallowedTools", "Edit,Write,NotebookEdit,Bash,Agent",
+	}
+
+	cmd := exec.CommandContext(ctx, claudeBinary, args...)
+	cmd.Dir = worktreePath
+	setPgid(cmd)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = r.db.MarkAIBriefFailed(ctx, brief.ID, "stdout pipe: "+err.Error())
+		return
+	}
+	stderrBuf := &strings.Builder{}
+	cmd.Stderr = stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		_ = r.db.MarkAIBriefFailed(ctx, brief.ID, "start claude: "+err.Error())
+		return
+	}
+	if err := r.db.MarkAIBriefRunning(ctx, brief.ID, cmd.Process.Pid, "", worktreePath); err != nil {
+		slog.Warn("mark brief running failed", "brief_id", brief.ID, "err", err)
+	}
+
+	raw, readErr := readAll(stdout)
+	waitErr := cmd.Wait()
+
+	if ctx.Err() != nil {
+		return
+	}
+	if waitErr != nil {
+		msg := fmt.Sprintf("claude exited: %v", waitErr)
+		if stderrBuf.Len() > 0 {
+			msg += "\n" + strings.TrimSpace(stderrBuf.String())
+		}
+		if readErr != nil {
+			msg += "\nread: " + readErr.Error()
+		}
+		_ = r.db.MarkAIBriefFailed(ctx, brief.ID, msg)
+		return
+	}
+
+	result, err := parseClaudeResult(raw)
+	if err != nil {
+		_ = r.db.MarkAIBriefFailed(ctx, brief.ID, fmt.Sprintf("parse claude output: %v\noutput: %s", err, snippet(raw, 400)))
+		return
+	}
+	if err := r.db.MarkAIBriefDone(ctx, brief.ID, result.Text); err != nil {
+		slog.Warn("mark brief done failed", "brief_id", brief.ID, "err", err)
+	}
+}
+
+// buildBriefPrompt assembles the structured-output prompt sent to
+// Claude. The strict Markdown structure lets the UI parse sections
+// deterministically.
+func buildBriefPrompt(in BriefInput) string {
+	var b strings.Builder
+	b.WriteString(
+		"You are generating a structural review brief for a pull request. " +
+			"Read the diff via git (the working directory is the PR head) and, as needed, " +
+			"read the repository files with your Read/Glob/Grep tools to understand context. " +
+			"You MUST produce output in the following Markdown structure exactly, with those " +
+			"section headings verbatim:\n\n",
+	)
+	b.WriteString("## Intent\n")
+	b.WriteString("1–2 sentences naming what this PR actually does, based on the code (not the PR title).\n\n")
+	b.WriteString("## Before\n")
+	b.WriteString("How the code was organised or how it flowed before this PR. Prose or bullets. For a pure addition write: \"Skipped: pure addition.\"\n\n")
+	b.WriteString("## After\n")
+	b.WriteString("How the code is organised or how it flows after this PR.\n\n")
+	b.WriteString("## Commits\n")
+	b.WriteString("For each commit in the PR, in order (oldest first), one bullet:\n")
+	b.WriteString("- `<sha>` **<one-line title>**\n")
+	b.WriteString("  - 1–3 bullets describing what this commit does, with file:line citations.\n")
+	b.WriteString("  - Suggested read depth: `read carefully`, `skim`, or `skip if trusted`.\n\n")
+	b.WriteString("## Observations\n")
+	b.WriteString("Neutral observations with file:line citations. Phrase concerns as questions, never as verdicts or recommendations.\n\n")
+	b.WriteString(
+		"Rules:\n" +
+			"- Every non-trivial claim MUST cite a file:line (e.g. `foo.go:42`).\n" +
+			"- Never produce review feedback. No 'should', no approvals, no verdicts.\n" +
+			"- Hedge when uncertain (\"appears to\", \"seems to\").\n" +
+			"- Keep prose tight. Bullets over paragraphs where it fits.\n",
+	)
+	if in.Depth == "quick" {
+		b.WriteString("- Quick mode: do not explore the repo deeply. Use the diff and commit log; one or two Grep/Read calls to disambiguate are fine.\n")
+	} else {
+		b.WriteString("- Deep mode: explore the repo to understand the before-state and cross-references. Use Read/Glob/Grep liberally.\n")
+	}
+	b.WriteString("\n")
+	if in.PromptContext != "" {
+		b.WriteString("Context:\n")
+		b.WriteString(in.PromptContext)
+		b.WriteString("\n\n")
+	}
+	b.WriteString(fmt.Sprintf("Head SHA: %s\n", in.HeadSHA))
+	b.WriteString(
+		"\nTo see the commit log and diff, run the git CLI via your tools if needed (but you may not have Bash — in that case, read files directly from the working copy). " +
+			"The worktree is already checked out at the PR head.\n",
+	)
+	return b.String()
 }
 
 func parseClaudeResult(raw []byte) (claudeResult, error) {

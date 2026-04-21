@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -373,3 +374,191 @@ func validateAIThreadInput(input *createAIThreadInput) error {
 var _ = json.Marshal
 var _ = http.MethodPost
 var _ = fmt.Sprintf
+
+// --- PR-level review brief ---
+
+type aiBriefResponse struct {
+	ID              int64      `json:"id"`
+	MergeRequestID  int64      `json:"mr_id"`
+	HeadSHA         string     `json:"head_sha"`
+	Status          string     `json:"status"`
+	Depth           string     `json:"depth"`
+	Content         string     `json:"content"`
+	Error           string     `json:"error,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	ClaudeSessionID *string    `json:"claude_session_id,omitempty"`
+}
+
+func toBriefResponse(b db.AIBrief) aiBriefResponse {
+	r := aiBriefResponse{
+		ID:             b.ID,
+		MergeRequestID: b.MergeRequestID,
+		HeadSHA:        b.HeadSHA,
+		Status:         b.Status,
+		Depth:          b.Depth,
+		Content:        b.Content,
+		Error:          b.Error,
+		CreatedAt:      b.CreatedAt.UTC(),
+		StartedAt:      utcPtr(b.StartedAt),
+		CompletedAt:    utcPtr(b.CompletedAt),
+	}
+	if b.ClaudeSessionID != nil && *b.ClaudeSessionID != "" {
+		r.ClaudeSessionID = b.ClaudeSessionID
+	}
+	return r
+}
+
+type createBriefInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+	Body   struct {
+		Depth string `json:"depth,omitempty" doc:"quick (default) or deep"`
+	}
+}
+
+type briefPathInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+}
+
+type aiBriefOutput struct{ Body aiBriefResponse }
+
+func (s *Server) createAIBrief(ctx context.Context, input *createBriefInput) (*aiBriefOutput, error) {
+	if s.aiReview == nil {
+		return nil, huma.Error503ServiceUnavailable("AI brief not available: clone manager or worktree dir not configured")
+	}
+
+	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+
+	// Resolve the PR's current head SHA + merge base from DB (kept
+	// up to date by the sync engine). The brief is keyed on head
+	// SHA so a push invalidates the cache naturally.
+	shas, err := s.db.GetDiffSHAs(ctx, input.Owner, input.Name, input.Number)
+	if err != nil || shas == nil || shas.DiffHeadSHA == "" || shas.MergeBaseSHA == "" {
+		return nil, huma.Error409Conflict("PR's diff SHAs aren't synced yet; try refreshing the PR first")
+	}
+
+	// Build prompt context: PR title/branches + git log between base
+	// and head, pre-computed so Claude doesn't need Bash. Diff text
+	// is left for Claude to read via Read tools — embedding the full
+	// diff would blow up the token budget on large PRs.
+	pr, err := s.db.GetMergeRequest(ctx, input.Owner, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("load pull request: " + err.Error())
+	}
+	if pr == nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+
+	host := s.syncer.HostForRepo(input.Owner, input.Name)
+	cloneDir := s.clones.ClonePath(host, input.Owner, input.Name)
+	gitLog, _ := runGitLogForBrief(ctx, cloneDir, shas.MergeBaseSHA, shas.DiffHeadSHA)
+
+	var ctxBuf strings.Builder
+	ctxBuf.WriteString(fmt.Sprintf("Repo: %s/%s\n", input.Owner, input.Name))
+	ctxBuf.WriteString(fmt.Sprintf("PR #%d: %s\n", pr.Number, pr.Title))
+	ctxBuf.WriteString(fmt.Sprintf("Base: %s  Head: %s  Branch: %s → %s\n",
+		shas.MergeBaseSHA[:min(7, len(shas.MergeBaseSHA))],
+		shas.DiffHeadSHA[:min(7, len(shas.DiffHeadSHA))],
+		pr.HeadBranch, pr.BaseBranch,
+	))
+	if pr.Body != "" {
+		ctxBuf.WriteString("\nAuthor's description:\n")
+		ctxBuf.WriteString(strings.TrimSpace(pr.Body))
+		ctxBuf.WriteString("\n")
+	}
+	if gitLog != "" {
+		ctxBuf.WriteString("\nCommit log (oldest first):\n")
+		ctxBuf.WriteString(gitLog)
+		ctxBuf.WriteString("\n")
+	}
+
+	depth := strings.ToLower(strings.TrimSpace(input.Body.Depth))
+	if depth == "" {
+		depth = "quick"
+	}
+
+	brief, err := s.aiReview.CreateBrief(ctx, aireview.BriefInput{
+		MergeRequestID: mrID,
+		Owner:          input.Owner,
+		Name:           input.Name,
+		HeadSHA:        shas.DiffHeadSHA,
+		Depth:          depth,
+		PromptContext:  ctxBuf.String(),
+	})
+	if err != nil {
+		return nil, huma.Error502BadGateway("create brief: " + err.Error())
+	}
+	return &aiBriefOutput{Body: toBriefResponse(brief)}, nil
+}
+
+func (s *Server) getAIBrief(ctx context.Context, input *briefPathInput) (*aiBriefOutput, error) {
+	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	brief, err := s.db.GetLatestAIBriefForMR(ctx, mrID)
+	if err != nil {
+		return nil, huma.Error404NotFound("no brief for this PR yet")
+	}
+	return &aiBriefOutput{Body: toBriefResponse(brief)}, nil
+}
+
+func (s *Server) deleteAIBrief(ctx context.Context, input *briefPathInput) (*emptyOutput, error) {
+	if s.aiReview == nil {
+		return nil, huma.Error503ServiceUnavailable("AI brief not available")
+	}
+	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	brief, err := s.db.GetLatestAIBriefForMR(ctx, mrID)
+	if err != nil {
+		return &emptyOutput{}, nil // nothing to delete, idempotent
+	}
+	if err := s.aiReview.DeleteBrief(ctx, brief.ID); err != nil {
+		return nil, huma.Error500InternalServerError("delete brief: " + err.Error())
+	}
+	return &emptyOutput{}, nil
+}
+
+// runGitLogForBrief captures a compact oneline log between base and
+// head that Claude can reference without needing Bash.
+func runGitLogForBrief(ctx context.Context, cloneDir, base, head string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", cloneDir,
+		"log", "--first-parent", "--reverse", "--format=%H %an%x00%s", base+".."+head)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	// Rewrite null-separated "sha name\0subject" into "sha (name) subject"
+	// for the prompt.
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var sb strings.Builder
+	for _, l := range lines {
+		parts := strings.SplitN(l, "\x00", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		head, subj := parts[0], parts[1]
+		sb.WriteString(head)
+		sb.WriteString(" ")
+		sb.WriteString(subj)
+		sb.WriteString("\n")
+	}
+	return sb.String(), nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

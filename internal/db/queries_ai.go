@@ -28,6 +28,25 @@ type AIThread struct {
 	ClosedAt        *time.Time
 }
 
+// AIBrief is a structural review brief for a PR. One-per-(mr_id,
+// head_sha): regenerating after a push creates a new row, so older
+// briefs remain as historical artifacts.
+type AIBrief struct {
+	ID              int64
+	MergeRequestID  int64
+	HeadSHA         string
+	ClaudeSessionID *string
+	WorktreePath    *string
+	Status          string // queued | running | done | failed | cancelled
+	Depth           string // quick | deep
+	Content         string // raw Markdown body
+	Error           string
+	PID             *int
+	CreatedAt       time.Time
+	StartedAt       *time.Time
+	CompletedAt     *time.Time
+}
+
 // AIQuestion is one Q&A pair within an AIThread.
 type AIQuestion struct {
 	ID            int64
@@ -379,6 +398,174 @@ func scanAIQuestion(row scanner) (AIQuestion, error) {
 		q.CompletedAt = &completedAt.Time
 	}
 	return q, nil
+}
+
+// --- AIBrief ---
+
+// UpsertAIBriefQueued creates a brief row in `queued` status for the
+// given (mr_id, head_sha), replacing any existing row for that pair.
+// Callers then spawn the Claude run and transition the row through
+// running → done/failed.
+func (d *DB) UpsertAIBriefQueued(ctx context.Context, mrID int64, headSHA, depth string) (AIBrief, error) {
+	tx, err := d.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return AIBrief{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM middleman_ai_briefs WHERE mr_id = ? AND head_sha = ?`,
+		mrID, headSHA,
+	); err != nil {
+		return AIBrief{}, fmt.Errorf("drop existing brief: %w", err)
+	}
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO middleman_ai_briefs (mr_id, head_sha, depth) VALUES (?, ?, ?)`,
+		mrID, headSHA, depth,
+	)
+	if err != nil {
+		return AIBrief{}, fmt.Errorf("insert brief: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return AIBrief{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AIBrief{}, err
+	}
+	return d.GetAIBrief(ctx, id)
+}
+
+func (d *DB) GetAIBrief(ctx context.Context, id int64) (AIBrief, error) {
+	return scanAIBrief(d.ro.QueryRowContext(ctx,
+		`SELECT id, mr_id, head_sha, claude_session_id, worktree_path,
+		        status, depth, content, error, pid,
+		        created_at, started_at, completed_at
+		   FROM middleman_ai_briefs WHERE id = ?`, id))
+}
+
+// GetLatestAIBriefForMR returns the most recent brief for the MR,
+// regardless of head SHA. Callers typically compare head_sha against
+// the PR's current head to decide whether the brief is fresh.
+func (d *DB) GetLatestAIBriefForMR(ctx context.Context, mrID int64) (AIBrief, error) {
+	return scanAIBrief(d.ro.QueryRowContext(ctx,
+		`SELECT id, mr_id, head_sha, claude_session_id, worktree_path,
+		        status, depth, content, error, pid,
+		        created_at, started_at, completed_at
+		   FROM middleman_ai_briefs
+		  WHERE mr_id = ?
+		  ORDER BY id DESC LIMIT 1`, mrID))
+}
+
+func (d *DB) MarkAIBriefRunning(ctx context.Context, id int64, pid int, sessionID, worktreePath string) error {
+	_, err := d.rw.ExecContext(ctx,
+		`UPDATE middleman_ai_briefs
+		    SET status = 'running', pid = ?,
+		        claude_session_id = ?, worktree_path = ?,
+		        started_at = datetime('now')
+		  WHERE id = ?`,
+		pid, sessionID, worktreePath, id,
+	)
+	return err
+}
+
+func (d *DB) MarkAIBriefDone(ctx context.Context, id int64, content string) error {
+	_, err := d.rw.ExecContext(ctx,
+		`UPDATE middleman_ai_briefs
+		    SET status = 'done', content = ?, pid = NULL,
+		        completed_at = datetime('now')
+		  WHERE id = ?`,
+		content, id,
+	)
+	return err
+}
+
+func (d *DB) MarkAIBriefFailed(ctx context.Context, id int64, errMsg string) error {
+	_, err := d.rw.ExecContext(ctx,
+		`UPDATE middleman_ai_briefs
+		    SET status = 'failed', error = ?, pid = NULL,
+		        completed_at = datetime('now')
+		  WHERE id = ?`,
+		errMsg, id,
+	)
+	return err
+}
+
+func (d *DB) MarkAIBriefCancelled(ctx context.Context, id int64) error {
+	_, err := d.rw.ExecContext(ctx,
+		`UPDATE middleman_ai_briefs
+		    SET status = 'cancelled', pid = NULL,
+		        completed_at = datetime('now')
+		  WHERE id = ? AND status IN ('queued', 'running')`,
+		id,
+	)
+	return err
+}
+
+func (d *DB) DeleteAIBrief(ctx context.Context, id int64) error {
+	_, err := d.rw.ExecContext(ctx,
+		`DELETE FROM middleman_ai_briefs WHERE id = ?`, id,
+	)
+	return err
+}
+
+// GetRunningAIBriefs returns all briefs in a non-terminal state.
+// Used on startup to mark stale rows as failed.
+func (d *DB) GetRunningAIBriefs(ctx context.Context) ([]AIBrief, error) {
+	rows, err := d.ro.QueryContext(ctx,
+		`SELECT id, mr_id, head_sha, claude_session_id, worktree_path,
+		        status, depth, content, error, pid,
+		        created_at, started_at, completed_at
+		   FROM middleman_ai_briefs
+		  WHERE status IN ('queued', 'running')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AIBrief
+	for rows.Next() {
+		b, err := scanAIBrief(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+func scanAIBrief(row scanner) (AIBrief, error) {
+	var b AIBrief
+	var sessionID, worktree sql.NullString
+	var pid sql.NullInt64
+	var startedAt, completedAt sql.NullTime
+	err := row.Scan(
+		&b.ID, &b.MergeRequestID, &b.HeadSHA, &sessionID, &worktree,
+		&b.Status, &b.Depth, &b.Content, &b.Error, &pid,
+		&b.CreatedAt, &startedAt, &completedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AIBrief{}, err
+		}
+		return AIBrief{}, fmt.Errorf("scan brief: %w", err)
+	}
+	if sessionID.Valid {
+		b.ClaudeSessionID = &sessionID.String
+	}
+	if worktree.Valid {
+		b.WorktreePath = &worktree.String
+	}
+	if pid.Valid {
+		v := int(pid.Int64)
+		b.PID = &v
+	}
+	if startedAt.Valid {
+		b.StartedAt = &startedAt.Time
+	}
+	if completedAt.Valid {
+		b.CompletedAt = &completedAt.Time
+	}
+	return b, nil
 }
 
 func intPtrToNullable(p *int) any {
