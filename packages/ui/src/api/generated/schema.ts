@@ -1437,6 +1437,8 @@ export interface components {
         SubmitReviewComment: {
             /** @description Comment body (markdown) */
             body: string;
+            /** @description Commit SHA this comment is anchored to; falls back to the review-level commit_id when empty */
+            commit_id?: string;
             /**
              * Format: int64
              * @description 1-based line in the file (at the commit)

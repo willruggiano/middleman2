@@ -52,6 +52,20 @@ type CreateReviewOpts struct {
 	Comments []ReviewComment
 }
 
+// InlineCommentOpts posts a single inline review comment that carries
+// its OWN commit_id rather than inheriting one from a review wrapper.
+// Used by the per-comment submit path so commits drafted against
+// different SHAs across the PR series don't all get anchored to HEAD.
+type InlineCommentOpts struct {
+	CommitID  string
+	Path      string
+	Body      string
+	Line      int
+	Side      string // "LEFT" or "RIGHT"
+	StartLine int    // 0 = single-line
+	StartSide string // defaults to Side
+}
+
 // Client is the interface for interacting with the GitHub API.
 type Client interface {
 	ListOpenPullRequests(ctx context.Context, owner, repo string) ([]*gh.PullRequest, error)
@@ -72,6 +86,7 @@ type Client interface {
 	CreateIssueComment(ctx context.Context, owner, repo string, number int, body string) (*gh.IssueComment, error)
 	GetRepository(ctx context.Context, owner, repo string) (*gh.Repository, error)
 	CreateReview(ctx context.Context, owner, repo string, number int, opts CreateReviewOpts) (*gh.PullRequestReview, error)
+	CreateInlineComment(ctx context.Context, owner, repo string, number int, opts InlineCommentOpts) (*gh.PullRequestComment, error)
 	MarkPullRequestReadyForReview(ctx context.Context, owner, repo string, number int) (*gh.PullRequest, error)
 	MergePullRequest(ctx context.Context, owner, repo string, number int, commitTitle, commitMessage, method string) (*gh.PullRequestMergeResult, error)
 	EditPullRequest(ctx context.Context, owner, repo string, number int, opts EditPullRequestOpts) (*gh.PullRequest, error)
@@ -837,6 +852,40 @@ func (c *liveClient) CreateReview(
 		)
 	}
 	return review, nil
+}
+
+func (c *liveClient) CreateInlineComment(
+	ctx context.Context, owner, repo string, number int, opts InlineCommentOpts,
+) (*gh.PullRequestComment, error) {
+	req := &gh.PullRequestComment{
+		Body: new(opts.Body),
+		Path: new(opts.Path),
+		Line: new(opts.Line),
+	}
+	if opts.CommitID != "" {
+		req.CommitID = new(opts.CommitID)
+	}
+	if opts.Side != "" {
+		req.Side = new(opts.Side)
+	}
+	if opts.StartLine > 0 {
+		req.StartLine = new(opts.StartLine)
+		startSide := opts.StartSide
+		if startSide == "" {
+			startSide = opts.Side
+			if startSide == "" {
+				startSide = "RIGHT"
+			}
+		}
+		req.StartSide = new(startSide)
+	}
+
+	comment, resp, err := c.gh.PullRequests.CreateComment(ctx, owner, repo, number, req)
+	c.trackRate(resp)
+	if err != nil {
+		return nil, fmt.Errorf("creating inline comment on %s/%s#%d: %w", owner, repo, number, err)
+	}
+	return comment, nil
 }
 
 func (c *liveClient) MarkPullRequestReadyForReview(

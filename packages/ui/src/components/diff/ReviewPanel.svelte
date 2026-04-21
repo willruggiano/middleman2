@@ -53,10 +53,12 @@
     diffStore.setDraftEvent(e);
   }
 
-  // Publish. Uses the newest commit SHA we know about as the review's
-  // commit_id. Individual per-comment commit IDs are not supported by
-  // the reviews API; we flag stale comments in the diff so the user
-  // can decide whether to proceed.
+  // Publish. Each inline comment carries the commit SHA it was
+  // drafted against so the backend can POST each one individually —
+  // reviewers drafting commit-by-commit don't have to worry about
+  // everything getting anchored to HEAD at publish time. The
+  // review-level commit_id is still sent as a fallback used when a
+  // comment has no commit_sha of its own.
   async function onSubmit(): Promise<void> {
     if (submitting) return;
     submitting = true;
@@ -71,6 +73,7 @@
       side: c.side,
       ...(c.startLine != null ? { start_line: c.startLine } : {}),
       body: c.body,
+      ...(c.commitSha ? { commit_id: c.commitSha } : {}),
     }));
 
     try {

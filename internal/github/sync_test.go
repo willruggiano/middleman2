@@ -241,6 +241,14 @@ func (m *mockClient) CreateReview(
 	return &gh.PullRequestReview{ID: &id, State: &state}, nil
 }
 
+func (m *mockClient) CreateInlineComment(
+	_ context.Context, _, _ string, _ int, _ InlineCommentOpts,
+) (*gh.PullRequestComment, error) {
+	m.trackCall()
+	id := int64(1)
+	return &gh.PullRequestComment{ID: &id}, nil
+}
+
 func (m *mockClient) MarkPullRequestReadyForReview(
 	_ context.Context, _, _ string, number int,
 ) (*gh.PullRequest, error) {

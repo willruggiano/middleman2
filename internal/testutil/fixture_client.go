@@ -283,6 +283,13 @@ func (c *FixtureClient) CreateReview(
 	return nil, errFixtureReadOnly
 }
 
+// CreateInlineComment returns an error (mutations not supported).
+func (c *FixtureClient) CreateInlineComment(
+	_ context.Context, _, _ string, _ int, _ ghclient.InlineCommentOpts,
+) (*gh.PullRequestComment, error) {
+	return nil, errFixtureReadOnly
+}
+
 func (c *FixtureClient) MarkPullRequestReadyForReview(
 	_ context.Context, owner, repo string, number int,
 ) (*gh.PullRequest, error) {

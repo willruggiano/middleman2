@@ -12,12 +12,18 @@
   // window to avoid flapping.
   const headSha = $derived(commits && commits.length > 0 ? commits[0]!.sha : "");
 
-  // Drifted = anchored to a commit that isn't what we'll publish
-  // against now. An empty commit_sha is also drifted: the draft was
-  // made before we had a commit list so its effective anchor is
-  // unknown and may not resolve.
+  // Drifted = the anchor commit is no longer in this PR (force-push,
+  // or never captured). Comments anchored to *any* commit that still
+  // exists in the series publish cleanly since each comment posts
+  // with its own commit_id.
   function isDrifted(c: DraftComment): boolean {
-    return headSha !== "" && (c.commitSha === "" || c.commitSha !== headSha);
+    if (c.commitSha === "") return true;
+    if (!commits || commits.length === 0) {
+      // Commits haven't loaded yet — only flag if we know the head and
+      // it differs; otherwise stay neutral.
+      return headSha !== "" && c.commitSha !== headSha;
+    }
+    return !commits.some((cc) => cc.sha === c.commitSha);
   }
 
   function shaLabel(c: DraftComment): string {

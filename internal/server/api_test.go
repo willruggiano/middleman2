@@ -50,6 +50,8 @@ type mockGH struct {
 	listIssueCommentsErr      error
 	createReviewFn            func(context.Context, string, string, int, ghclient.CreateReviewOpts) (*gh.PullRequestReview, error)
 	lastCreateReviewOpts      *ghclient.CreateReviewOpts
+	createInlineCommentFn     func(context.Context, string, string, int, ghclient.InlineCommentOpts) (*gh.PullRequestComment, error)
+	lastInlineComments        []ghclient.InlineCommentOpts
 }
 
 func (m *mockGH) ListOpenPullRequests(ctx context.Context, owner, repo string) ([]*gh.PullRequest, error) {
@@ -195,6 +197,17 @@ func (m *mockGH) CreateReview(
 	id := int64(99)
 	state := "APPROVED"
 	return &gh.PullRequestReview{ID: &id, State: &state}, nil
+}
+
+func (m *mockGH) CreateInlineComment(
+	ctx context.Context, owner, repo string, number int, opts ghclient.InlineCommentOpts,
+) (*gh.PullRequestComment, error) {
+	m.lastInlineComments = append(m.lastInlineComments, opts)
+	if m.createInlineCommentFn != nil {
+		return m.createInlineCommentFn(ctx, owner, repo, number, opts)
+	}
+	id := int64(len(m.lastInlineComments))
+	return &gh.PullRequestComment{ID: &id}, nil
 }
 
 func (m *mockGH) MarkPullRequestReadyForReview(
@@ -939,19 +952,105 @@ func TestAPISubmitReview_WithInlineComments(t *testing.T) {
 	require.NoError(err)
 	require.Equal(http.StatusOK, resp.StatusCode())
 	require.NotNil(resp.JSON200)
-	assert.Equal(int64(99), resp.JSON200.ReviewId)
+	// Inline comment posted individually carrying the supplied
+	// commit_id; review wrapper posted afterwards with the body.
+	require.Len(mock.lastInlineComments, 1)
+	ic := mock.lastInlineComments[0]
+	assert.Equal("src/x.go", ic.Path)
+	assert.Equal(42, ic.Line)
+	assert.Equal("RIGHT", ic.Side)
+	assert.Equal("Consider renaming this", ic.Body)
+	assert.Equal("abc1234", ic.CommitID)
 
-	// Verify the request shaped for GitHub matches what we sent.
 	require.NotNil(mock.lastCreateReviewOpts)
 	opts := mock.lastCreateReviewOpts
 	assert.Equal("COMMENT", opts.Event)
 	assert.Equal("Overall LGTM", opts.Body)
-	assert.Equal("abc1234", opts.CommitID)
-	require.Len(opts.Comments, 1)
-	assert.Equal("src/x.go", opts.Comments[0].Path)
-	assert.Equal(42, opts.Comments[0].Line)
-	assert.Equal("RIGHT", opts.Comments[0].Side)
-	assert.Equal("Consider renaming this", opts.Comments[0].Body)
+	// Review wrapper no longer carries inline comments (they went
+	// through the individual endpoint).
+	assert.Empty(opts.Comments)
+}
+
+func TestAPISubmitReview_PerCommentCommitID(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	mock := &mockGH{}
+	srv, _ := setupTestServerWithMock(t, mock)
+	client := setupTestClient(t, srv)
+	headSha := "head1234"
+	olderSha := "older567"
+	side := "RIGHT"
+	b1 := "old-commit comment"
+	b2 := "head comment"
+
+	// Two comments: one anchored to an older commit, one to HEAD.
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody{
+			Event:    "COMMENT",
+			CommitId: &headSha,
+			Comments: &[]generated.SubmitReviewComment{
+				{Path: "a.go", Line: 10, Side: &side, Body: b1, CommitId: &olderSha},
+				{Path: "b.go", Line: 20, Side: &side, Body: b2, CommitId: &headSha},
+			},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.Len(mock.lastInlineComments, 2)
+	assert.Equal("older567", mock.lastInlineComments[0].CommitID)
+	assert.Equal("head1234", mock.lastInlineComments[1].CommitID)
+
+	// With only inline comments and a bare "COMMENT" event (no body),
+	// the review wrapper is skipped.
+	require.Nil(mock.lastCreateReviewOpts)
+}
+
+func TestAPISubmitReview_PerCommentFallsBackToReviewLevelCommitID(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	mock := &mockGH{}
+	srv, _ := setupTestServerWithMock(t, mock)
+	client := setupTestClient(t, srv)
+	headSha := "head1234"
+	side := "RIGHT"
+	b := "q"
+
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody{
+			Event:    "COMMENT",
+			CommitId: &headSha,
+			Comments: &[]generated.SubmitReviewComment{
+				{Path: "a.go", Line: 1, Side: &side, Body: b},
+			},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.Len(mock.lastInlineComments, 1)
+	assert.Equal("head1234", mock.lastInlineComments[0].CommitID)
+}
+
+func TestAPISubmitReview_RejectsMissingCommitID(t *testing.T) {
+	require := require.New(t)
+	mock := &mockGH{}
+	srv, _ := setupTestServerWithMock(t, mock)
+	client := setupTestClient(t, srv)
+	side := "RIGHT"
+	b := "q"
+
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody{
+			Event: "COMMENT",
+			Comments: &[]generated.SubmitReviewComment{
+				{Path: "a.go", Line: 1, Side: &side, Body: b},
+			},
+		},
+	)
+	require.NoError(err)
+	Assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
 }
 
 func TestAPISubmitReview_RejectsInvalidEvent(t *testing.T) {
@@ -973,11 +1072,13 @@ func TestAPISubmitReview_DefaultsSideToRight(t *testing.T) {
 	srv, _ := setupTestServerWithMock(t, mock)
 	client := setupTestClient(t, srv)
 	b := "pls"
+	sha := "abc1234"
 
 	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewWithResponse(
 		context.Background(), "acme", "widget", 1,
 		generated.PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody{
-			Event: "COMMENT",
+			Event:    "COMMENT",
+			CommitId: &sha,
 			Comments: &[]generated.SubmitReviewComment{{
 				Path: "a.go",
 				Line: 1,
@@ -987,9 +1088,8 @@ func TestAPISubmitReview_DefaultsSideToRight(t *testing.T) {
 	)
 	require.NoError(err)
 	require.Equal(http.StatusOK, resp.StatusCode())
-	require.NotNil(mock.lastCreateReviewOpts)
-	require.Len(mock.lastCreateReviewOpts.Comments, 1)
-	require.Equal("RIGHT", mock.lastCreateReviewOpts.Comments[0].Side)
+	require.Len(mock.lastInlineComments, 1)
+	require.Equal("RIGHT", mock.lastInlineComments[0].Side)
 }
 
 func TestAPIApproveWorkflows(t *testing.T) {

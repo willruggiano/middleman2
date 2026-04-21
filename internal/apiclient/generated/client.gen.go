@@ -676,6 +676,9 @@ type SubmitReviewComment struct {
 	// Body Comment body (markdown)
 	Body string `json:"body"`
 
+	// CommitId Commit SHA this comment is anchored to; falls back to the review-level commit_id when empty
+	CommitId *string `json:"commit_id,omitempty"`
+
 	// Line 1-based line in the file (at the commit)
 	Line int64 `json:"line"`
 

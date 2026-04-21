@@ -1,38 +1,43 @@
 <script lang="ts">
+  import { getStores } from "../../context.js";
   import type { DraftComment } from "../../stores/diff.svelte.js";
 
   interface Props {
     comment: DraftComment;
-    // The SHA the reviewer would publish against now. When it differs
-    // from comment.commitSha, the anchor chip switches to a warning
-    // colour to flag the reviewer that line numbers may have shifted
-    // since the draft was written. Empty string means "don't know
-    // yet" — render neutrally.
+    // Retained for the tooltip so we can describe what the publish
+    // path will do with this draft. Not used for drift detection
+    // anymore — see below.
     currentHeadSha: string;
     ondelete: () => void;
   }
 
   const { comment, currentHeadSha, ondelete }: Props = $props();
+  const { diff: diffStore } = getStores();
 
-  // A draft is "drifted" when we can't assume it'll resolve against
-  // the review's commit_id at publish time. That covers both:
-  //  - a known-different commit (the classic drift case), and
-  //  - an unknown commit (commit_sha was empty at draft time because
-  //    the commit list hadn't loaded yet — the comment was anchored
-  //    optimistically to the head we later send as commit_id).
-  const drifted = $derived(
-    currentHeadSha !== "" &&
-      (comment.commitSha === "" || comment.commitSha !== currentHeadSha),
-  );
+  // Drift now means the draft's anchor commit isn't in the PR at
+  // all (force-pushed away, or commit_sha was never captured). The
+  // publish path posts each inline comment with its OWN commit_id,
+  // so a draft anchored to an earlier still-present commit in the
+  // PR series publishes fine — no reason to amber-flag it.
+  const drifted = $derived.by(() => {
+    if (comment.commitSha === "") return true;
+    const commits = diffStore.getCommits();
+    if (!commits || commits.length === 0) {
+      // Commits haven't loaded; don't flag prematurely. Fall back to
+      // the head comparison if we know it.
+      return currentHeadSha !== "" && comment.commitSha !== currentHeadSha;
+    }
+    return !commits.some((c) => c.sha === comment.commitSha);
+  });
 
   const chipTitle = $derived.by(() => {
     if (!comment.commitSha) {
-      return `Anchor commit unknown (the commit list wasn't loaded when this was drafted). Publish will use ${currentHeadSha.slice(0, 7)}; GitHub may reject this comment if the line numbers don't resolve.`;
+      return "Anchor commit unknown (drafted before the commit list loaded). Delete and redraft, or the publish may fail.";
     }
     if (drifted) {
-      return `Drafted against ${comment.commitSha.slice(0, 7)}. Publish will use ${currentHeadSha.slice(0, 7)} as the review's base; GitHub may reject this comment if line numbers have shifted.`;
+      return `Anchor commit ${comment.commitSha.slice(0, 7)} is no longer in this PR (force-pushed away?). This comment will be rejected at publish.`;
     }
-    return `Drafted against ${comment.commitSha.slice(0, 7)}.`;
+    return `Drafted against ${comment.commitSha.slice(0, 7)} — posts with this commit_id.`;
   });
 </script>
 

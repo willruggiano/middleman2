@@ -144,6 +144,7 @@ type submitReviewComment struct {
 	Side      string `json:"side,omitempty"      doc:"LEFT or RIGHT; RIGHT when omitted"`
 	StartLine int    `json:"start_line,omitempty" doc:"For multi-line comments; omit for single-line"`
 	Body      string `json:"body"                doc:"Comment body (markdown)"`
+	CommitID  string `json:"commit_id,omitempty" doc:"Commit SHA this comment is anchored to; falls back to the review-level commit_id when empty"`
 }
 
 type submitReviewInput struct {
@@ -1079,11 +1080,15 @@ func (s *Server) approvePR(ctx context.Context, input *approvePRInput) (*actionS
 	return &actionStatusOutput{Body: actionStatusBody{Status: "approved"}}, nil
 }
 
-// submitReview posts a review with optional inline comments. The caller
-// supplies the review event (APPROVE/REQUEST_CHANGES/COMMENT), an
-// optional top-level body, and a list of inline comments. Each comment
-// must reference a path + line that exists in the PR's head at the
-// provided commit_id — GitHub rejects comments that don't resolve.
+// submitReview publishes a reviewer's pending comments + optional
+// review event. Each inline comment is posted individually via the
+// pull-request-comments endpoint so it can carry its OWN commit_id —
+// that lets reviewers draft against different commits in the PR
+// series without the whole review getting anchored to HEAD (and
+// failing when line numbers shifted). The review-level event (if
+// APPROVE/REQUEST_CHANGES, or COMMENT with a body) is posted
+// afterwards via the reviews endpoint with no inline comments, just
+// the verdict + summary.
 func (s *Server) submitReview(ctx context.Context, input *submitReviewInput) (*submitReviewOutput, error) {
 	client, err := s.syncer.ClientForRepo(input.Owner, input.Name)
 	if err != nil {
@@ -1099,7 +1104,10 @@ func (s *Server) submitReview(ctx context.Context, input *submitReviewInput) (*s
 		return nil, huma.Error400BadRequest("REQUEST_CHANGES requires a review body or at least one inline comment")
 	}
 
-	comments := make([]ghclient.ReviewComment, 0, len(input.Body.Comments))
+	// Validate and normalize every comment before any network call so
+	// partial failures are easier to reason about — invalid inputs
+	// fail fast and don't leave a half-published review.
+	preps := make([]preparedComment, 0, len(input.Body.Comments))
 	for i, c := range input.Body.Comments {
 		if c.Path == "" {
 			return nil, huma.Error400BadRequest(fmt.Sprintf("comment[%d]: path is required", i))
@@ -1117,61 +1125,111 @@ func (s *Server) submitReview(ctx context.Context, input *submitReviewInput) (*s
 		if side != "LEFT" && side != "RIGHT" {
 			return nil, huma.Error400BadRequest(fmt.Sprintf("comment[%d]: side must be LEFT or RIGHT", i))
 		}
-		comments = append(comments, ghclient.ReviewComment{
-			Path:      c.Path,
-			Line:      c.Line,
-			Side:      side,
-			StartLine: c.StartLine,
-			Body:      c.Body,
-		})
+		sha := c.CommitID
+		if sha == "" {
+			sha = input.Body.CommitID // review-level fallback
+		}
+		if sha == "" {
+			return nil, huma.Error400BadRequest(fmt.Sprintf("comment[%d]: commit_id is required (either per-comment or review-level)", i))
+		}
+		preps = append(preps, preparedComment{in: c, side: side, sha: sha, index: i})
 	}
 
-	review, err := client.CreateReview(ctx, input.Owner, input.Name, input.Number, ghclient.CreateReviewOpts{
-		Event:    input.Body.Event,
-		Body:     input.Body.Body,
-		CommitID: input.Body.CommitID,
-		Comments: comments,
-	})
-	if err != nil {
-		// GitHub enforces at most one pending review per PR per user.
-		// When the reviewer already has one outstanding (e.g. started
-		// from the GitHub web UI), CreateReview fails 422 with a
-		// specific message. Translate that to a clearer conflict error
-		// so the UI can guide the user to resolve it.
-		if strings.Contains(err.Error(), "one pending review per pull request") {
-			prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", input.Owner, input.Name, input.Number)
-			return nil, huma.Error409Conflict(
-				"You already have a pending review on this PR. Cancel or submit it on GitHub before trying again: " + prURL,
-			)
+	// Phase 1: post each inline comment with its own commit_id. A
+	// failure on any single comment aborts — partial publishes are
+	// confusing, and the client can retry after the reviewer deletes
+	// the bad draft.
+	postedIDs := make([]int64, 0, len(preps))
+	for _, p := range preps {
+		_, err := client.CreateInlineComment(ctx, input.Owner, input.Name, input.Number, ghclient.InlineCommentOpts{
+			CommitID:  p.sha,
+			Path:      p.in.Path,
+			Body:      p.in.Body,
+			Line:      p.in.Line,
+			Side:      p.side,
+			StartLine: p.in.StartLine,
+			StartSide: p.side,
+		})
+		if err != nil {
+			return nil, translateCreateError(err, input, &p, len(postedIDs))
 		}
-		// "could not be resolved" means one or more inline comments
-		// anchor to a line that doesn't map to the PR's current head.
-		// Almost always because the reviewer drafted the comment
-		// against an older commit and the file changed since. The
-		// pending card already flags drift with the amber "@ sha"
-		// chip — surface actionable guidance here.
-		if strings.Contains(err.Error(), "could not be resolved") {
-			return nil, huma.Error409Conflict(
-				"GitHub couldn't anchor one or more inline comments. This usually means the comment was drafted against an older commit and the file has changed since. " +
-					"Look for pending comments with an amber commit chip (@ sha) in the diff — those drafts may need to be rewritten against the current code, then try publishing again. Raw error: " + err.Error(),
-			)
+	}
+
+	// Phase 2: post the review wrapper (verdict + summary) if it
+	// carries meaningful content. Approve/Request-Changes always
+	// publish; a bare "COMMENT" event with no body and no user-level
+	// commentary gets skipped since the inline comments above are
+	// enough.
+	var review *gh.PullRequestReview
+	wrapperNeeded := input.Body.Event != "COMMENT" || strings.TrimSpace(input.Body.Body) != ""
+	if wrapperNeeded {
+		review, err = client.CreateReview(ctx, input.Owner, input.Name, input.Number, ghclient.CreateReviewOpts{
+			Event:    input.Body.Event,
+			Body:     input.Body.Body,
+			CommitID: input.Body.CommitID,
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "one pending review per pull request") {
+				prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", input.Owner, input.Name, input.Number)
+				return nil, huma.Error409Conflict(
+					"You already have a pending review on this PR. Cancel or submit it on GitHub before trying again: " + prURL,
+				)
+			}
+			return nil, huma.Error502BadGateway("submit review wrapper: " + err.Error())
 		}
-		return nil, huma.Error502BadGateway("submit review: " + err.Error())
 	}
 
 	// Persist the review body as an event so it shows up in the timeline
 	// without waiting for the next sync cycle. Inline comments land via
 	// the review_comment sync path on the next refresh.
-	ref := repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number}
-	if mrID, lookupErr := s.lookupMRID(ctx, ref); lookupErr == nil {
-		event := ghclient.NormalizeReviewEvent(mrID, review)
-		_ = s.db.UpsertMREvents(ctx, []db.MREvent{event})
+	if review != nil {
+		ref := repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number}
+		if mrID, lookupErr := s.lookupMRID(ctx, ref); lookupErr == nil {
+			event := ghclient.NormalizeReviewEvent(mrID, review)
+			_ = s.db.UpsertMREvents(ctx, []db.MREvent{event})
+		}
 	}
 
-	return &submitReviewOutput{Body: submitReviewResponseBody{
-		ReviewID: review.GetID(),
-		State:    review.GetState(),
-	}}, nil
+	out := submitReviewResponseBody{}
+	if review != nil {
+		out.ReviewID = review.GetID()
+		out.State = review.GetState()
+	}
+	return &submitReviewOutput{Body: out}, nil
+}
+
+// preparedComment is a validated, normalised draft waiting to be
+// posted. Declared at package scope so translateCreateError can
+// take a typed pointer.
+type preparedComment struct {
+	in    submitReviewComment
+	side  string
+	sha   string
+	index int
+}
+
+// translateCreateError wraps the individual-comment failure with
+// guidance the UI can render inline in the review panel.
+func translateCreateError(err error, input *submitReviewInput, failing *preparedComment, postedSoFar int) error {
+	msg := err.Error()
+	if strings.Contains(msg, "one pending review per pull request") {
+		prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", input.Owner, input.Name, input.Number)
+		return huma.Error409Conflict(
+			"You already have a pending review on this PR. Cancel or submit it on GitHub before trying again: " + prURL,
+		)
+	}
+	prefix := ""
+	if postedSoFar > 0 {
+		prefix = fmt.Sprintf("%d comment(s) posted before this one failed; visit GitHub to clean up if needed. ", postedSoFar)
+	}
+	if strings.Contains(msg, "could not be resolved") {
+		return huma.Error409Conflict(
+			prefix + fmt.Sprintf("GitHub couldn't anchor comment[%d] on %s at line %d against %s. "+
+				"The file likely changed at that line in that commit. Either rewrite the draft against the current code or delete it before retrying. Raw: %s",
+				failing.index, failing.in.Path, failing.in.Line, failing.sha, msg),
+		)
+	}
+	return huma.Error502BadGateway(prefix + "submit inline comment: " + msg)
 }
 
 func (s *Server) approveWorkflows(ctx context.Context, input *repoNumberInput) (*actionStatusOutput, error) {
