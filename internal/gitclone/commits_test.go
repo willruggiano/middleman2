@@ -314,6 +314,56 @@ func TestParentOf_MergeCommit(t *testing.T) {
 	assert.Equal(firstParentSHA, parent)
 }
 
+func TestListCommits_BodyParsed(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dir := t.TempDir()
+	bare := filepath.Join(dir, "remote.git")
+	commitTestRun(t, dir, "git", "init", "--bare", "--initial-branch=main", bare)
+
+	work := filepath.Join(dir, "work")
+	commitTestRun(t, dir, "git", "clone", bare, work)
+	commitTestRun(t, work, "git", "config", "user.email", "test@test.com")
+	commitTestRun(t, work, "git", "config", "user.name", "Test")
+
+	require.NoError(os.WriteFile(filepath.Join(work, "base.txt"), []byte("base\n"), 0o644))
+	commitTestRun(t, work, "git", "add", ".")
+	commitTestRun(t, work, "git", "commit", "-m", "base")
+	commitTestRun(t, work, "git", "push", "origin", "main")
+	mergeBase := gitSHA(t, work, "HEAD")
+
+	commitTestRun(t, work, "git", "checkout", "-b", "pr")
+
+	// Commit with multi-paragraph body.
+	require.NoError(os.WriteFile(filepath.Join(work, "a.txt"), []byte("a\n"), 0o644))
+	commitTestRun(t, work, "git", "add", ".")
+	commitTestRun(t, work, "git", "commit",
+		"-m", "feat: do a thing",
+		"-m", "Longer explanation of why.\nAcross multiple lines.",
+		"-m", "Fixes #42")
+
+	// Subject-only commit (no body).
+	require.NoError(os.WriteFile(filepath.Join(work, "b.txt"), []byte("b\n"), 0o644))
+	commitTestRun(t, work, "git", "add", ".")
+	commitTestRun(t, work, "git", "commit", "-m", "chore: no body")
+
+	commitTestRun(t, work, "git", "push", "origin", "pr")
+	headSHA := gitSHA(t, work, "HEAD")
+
+	mgr := New(filepath.Dir(bare), nil)
+	commits, err := mgr.ListCommits(context.Background(), "", "", "remote", mergeBase, headSHA)
+	require.NoError(err)
+	require.Len(commits, 2)
+
+	// Newest first.
+	assert.Equal("chore: no body", commits[0].Message)
+	assert.Empty(commits[0].Body)
+
+	assert.Equal("feat: do a thing", commits[1].Message)
+	assert.Equal("Longer explanation of why.\nAcross multiple lines.\n\nFixes #42", commits[1].Body)
+}
+
 func TestListCommits_NulInMessage(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

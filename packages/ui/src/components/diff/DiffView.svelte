@@ -154,6 +154,9 @@
               <span class="commit-header__author">{activeCommit.author_name}</span>
             </div>
             <div class="commit-header__message">{activeCommit.message}</div>
+            {#if activeCommit.body}
+              <div class="commit-header__body">{activeCommit.body}</div>
+            {/if}
           </div>
         {/if}
         <div
@@ -271,6 +274,16 @@
     white-space: pre-wrap;
     word-break: break-word;
     line-height: 1.4;
+  }
+
+  .commit-header__body {
+    margin-top: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.45;
   }
 
   @keyframes spin {

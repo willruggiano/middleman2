@@ -4603,6 +4603,83 @@ func TestAPIGetCommits(t *testing.T) {
 	assert.Equal(time.UTC, (*resp.JSON200.Commits)[0].AuthoredAt.Location())
 }
 
+func TestAPIGetCommits_BodyReturned(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	// Rebuild a small repo with body-bearing and subject-only commits so we
+	// can verify the API exposes the full commit body.
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	require.NoError(err)
+	t.Cleanup(func() { database.Close() })
+
+	bareDir := filepath.Join(dir, "clones")
+	require.NoError(os.MkdirAll(bareDir, 0o755))
+	bare := filepath.Join(bareDir, "github.com", "acme", "widget.git")
+
+	work := filepath.Join(dir, "work")
+	runGit(t, dir, "init", "--bare", "--initial-branch=main", bare)
+	runGit(t, dir, "clone", bare, work)
+	runGit(t, work, "config", "user.email", "test@test.com")
+	runGit(t, work, "config", "user.name", "Test")
+
+	require.NoError(os.WriteFile(filepath.Join(work, "base.txt"), []byte("base\n"), 0o644))
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-m", "base commit")
+	runGit(t, work, "push", "origin", "main")
+	mergeBase := testGitSHA(t, work, "HEAD")
+
+	runGit(t, work, "checkout", "-b", "pr")
+
+	require.NoError(os.WriteFile(filepath.Join(work, "a.txt"), []byte("a\n"), 0o644))
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit",
+		"-m", "feat: do a thing",
+		"-m", "Longer explanation of why.\nAcross two lines.",
+		"-m", "Fixes #42")
+
+	require.NoError(os.WriteFile(filepath.Join(work, "b.txt"), []byte("b\n"), 0o644))
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-m", "chore: no body")
+
+	runGit(t, work, "push", "origin", "pr")
+	headSHA := testGitSHA(t, work, "HEAD")
+
+	clones := gitclone.New(bareDir, nil)
+	mock := &mockGH{}
+	repos := []ghclient.RepoRef{{Owner: "acme", Name: "widget", PlatformHost: "github.com"}}
+	syncer := ghclient.NewSyncer(map[string]ghclient.Client{"github.com": mock}, database, nil, repos, time.Minute, nil, nil)
+	t.Cleanup(syncer.Stop)
+	srv := New(database, syncer, nil, "/", nil, ServerOptions{Clones: clones})
+
+	seedPR(t, database, "acme", "widget", 1)
+	ctx := context.Background()
+	repoID, err := database.UpsertRepo(ctx, "github.com", "acme", "widget")
+	require.NoError(err)
+	require.NoError(database.UpdateDiffSHAs(ctx, repoID, 1, headSHA, mergeBase, mergeBase))
+
+	client := setupTestClient(t, srv)
+	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberCommitsWithResponse(
+		context.Background(), "acme", "widget", 1,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	require.Len(*resp.JSON200.Commits, 2)
+
+	// Newest first: subject-only commit has no body.
+	first := (*resp.JSON200.Commits)[0]
+	assert.Equal("chore: no body", first.Message)
+	assert.Nil(first.Body)
+
+	// Body-bearing commit preserves paragraphs separated by blank lines.
+	second := (*resp.JSON200.Commits)[1]
+	assert.Equal("feat: do a thing", second.Message)
+	require.NotNil(second.Body)
+	assert.Equal("Longer explanation of why.\nAcross two lines.\n\nFixes #42", *second.Body)
+}
+
 func TestAPIGetCommits_NotFound(t *testing.T) {
 	client, _, _, _, _ := setupTestServerWithClones(t)
 

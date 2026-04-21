@@ -1772,6 +1772,7 @@ func (s *Server) getCommits(ctx context.Context, input *repoNumberInput) (*getCo
 		resp.Commits[i] = commitResponse{
 			SHA:        c.SHA,
 			Message:    c.Message,
+			Body:       c.Body,
 			AuthorName: c.AuthorName,
 			AuthoredAt: c.AuthoredAt.UTC(),
 		}

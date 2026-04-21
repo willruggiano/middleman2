@@ -1,8 +1,6 @@
 package gitclone
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -17,7 +15,8 @@ type Commit struct {
 	SHA        string
 	AuthorName string
 	AuthoredAt time.Time
-	Message    string // first line only
+	Message    string // subject (first line) only
+	Body       string // remainder of the commit message after the subject, trimmed
 }
 
 // ListCommits returns commits between mergeBase and headSHA, newest first,
@@ -29,7 +28,11 @@ func (m *Manager) ListCommits(
 ) ([]Commit, error) {
 	dir := m.ClonePath(host, owner, name)
 
-	args := []string{"log", "--first-parent", "--format=%H%x00%an%x00%aI%x00%s"}
+	// -z terminates each log entry with NUL (instead of newline), which
+	// lets the raw body (%B) safely contain newlines. We use NUL between
+	// fields as well, so the output is a flat stream of NUL-separated
+	// fields consumed in groups of 4.
+	args := []string{"log", "-z", "--first-parent", "--format=%H%x00%an%x00%aI%x00%B"}
 	if mergeBase == emptyTreeSHA {
 		// Empty tree is not a commit — list all ancestors of head.
 		args = append(args, headSHA)
@@ -42,30 +45,33 @@ func (m *Manager) ListCommits(
 		return nil, fmt.Errorf("list commits: %w", err)
 	}
 
-	var commits []Commit
-	scanner := bufio.NewScanner(bytes.NewReader(out))
-	scanner.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, "\x00", 4)
-		if len(parts) != 4 {
-			return nil, fmt.Errorf("unexpected git log line: %q", line)
-		}
-		t, err := time.Parse(time.RFC3339, parts[2])
+	s := strings.TrimSuffix(string(out), "\x00")
+	if s == "" {
+		return nil, nil
+	}
+	fields := strings.Split(s, "\x00")
+	if len(fields)%4 != 0 {
+		return nil, fmt.Errorf("unexpected git log field count: %d", len(fields))
+	}
+
+	commits := make([]Commit, 0, len(fields)/4)
+	for i := 0; i < len(fields); i += 4 {
+		t, err := time.Parse(time.RFC3339, fields[i+2])
 		if err != nil {
-			return nil, fmt.Errorf("parse commit date %q: %w", parts[2], err)
+			return nil, fmt.Errorf("parse commit date %q: %w", fields[i+2], err)
 		}
+		// %B includes a trailing newline; drop it so the body isn't padded.
+		msg := strings.TrimRight(fields[i+3], "\n")
+		subject, body, _ := strings.Cut(msg, "\n")
 		commits = append(commits, Commit{
-			SHA:        parts[0],
-			AuthorName: parts[1],
+			SHA:        fields[i],
+			AuthorName: fields[i+1],
 			AuthoredAt: t,
-			Message:    parts[3],
+			Message:    subject,
+			Body:       strings.TrimSpace(body),
 		})
 	}
-	return commits, scanner.Err()
+	return commits, nil
 }
 
 // ParentOf returns the first parent SHA of the given commit.

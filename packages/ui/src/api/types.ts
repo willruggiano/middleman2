@@ -102,6 +102,7 @@ export interface DiffLine {
 export interface CommitInfo {
   sha: string;
   message: string;
+  body?: string;
   author_name: string;
   authored_at: string;
 }

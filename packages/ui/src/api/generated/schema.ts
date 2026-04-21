@@ -616,7 +616,9 @@ export interface components {
              * @description Commit author date (RFC3339)
              */
             authored_at: string;
-            /** @description First line of commit message */
+            /** @description Commit message body (trimmed, empty when the message has no body) */
+            body?: string;
+            /** @description Subject (first line) of commit message */
             message: string;
             /** @description Full commit SHA */
             sha: string;

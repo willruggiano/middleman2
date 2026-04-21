@@ -81,7 +81,10 @@ type CommitResponse struct {
 	// AuthoredAt Commit author date (RFC3339)
 	AuthoredAt time.Time `json:"authored_at"`
 
-	// Message First line of commit message
+	// Body Commit message body (trimmed, empty when the message has no body)
+	Body *string `json:"body,omitempty"`
+
+	// Message Subject (first line) of commit message
 	Message string `json:"message"`
 
 	// Sha Full commit SHA
