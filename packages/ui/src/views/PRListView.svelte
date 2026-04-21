@@ -1,16 +1,19 @@
 <script lang="ts">
   import {
-    getNavigate, getSidebar,
+    getNavigate, getSidebar, getStores,
   } from "../context.js";
   import CollapsibleResizableSidebar from "../components/shared/CollapsibleResizableSidebar.svelte";
   import PullList from "../components/sidebar/PullList.svelte";
   import PullDetail
     from "../components/detail/PullDetail.svelte";
   import DiffView from "../components/diff/DiffView.svelte";
+  import DiffSidebar from "../components/diff/DiffSidebar.svelte";
+  import ReviewCoverBanner from "../components/detail/ReviewCoverBanner.svelte";
   import StackSidebar
     from "../components/detail/StackSidebar.svelte";
 
   const { isSidebarToggleEnabled, toggleSidebar } = getSidebar();
+  const { detail: detailStore } = getStores();
   const navigate = getNavigate();
 
   interface Props {
@@ -28,12 +31,14 @@
 
   let {
     selectedPR = null,
-    detailTab = "conversation",
+    detailTab = "files",
     isSidebarCollapsed = false,
     hideSidebar = false,
     sidebarWidth = 340,
     onSidebarResize,
   }: Props = $props();
+
+  const selectedPRDetail = $derived(detailStore.getDetail());
 </script>
 
 <CollapsibleResizableSidebar
@@ -53,30 +58,44 @@
     <div class="detail-tabs">
       <button
         class="detail-tab"
-        class:detail-tab--active={detailTab === "conversation"}
-        onclick={() => navigate(
-          `/pulls/${selectedPR.owner}/${selectedPR.name}/${selectedPR.number}`,
-        )}
-      >
-        Conversation
-      </button>
-      <button
-        class="detail-tab"
         class:detail-tab--active={detailTab === "files"}
         onclick={() => navigate(
           `/pulls/${selectedPR.owner}/${selectedPR.name}/${selectedPR.number}/files`,
         )}
       >
-        Files changed
+        Review
+      </button>
+      <button
+        class="detail-tab"
+        class:detail-tab--active={detailTab === "conversation"}
+        onclick={() => navigate(
+          `/pulls/${selectedPR.owner}/${selectedPR.name}/${selectedPR.number}`,
+        )}
+      >
+        Activity
       </button>
     </div>
     {#if detailTab === "files"}
       {#key `${selectedPR.owner}/${selectedPR.name}/${selectedPR.number}`}
-        <DiffView
-          owner={selectedPR.owner}
-          name={selectedPR.name}
-          number={selectedPR.number}
-        />
+        <div class="review-layout">
+          <aside class="review-sidebar">
+            <DiffSidebar />
+          </aside>
+          <div class="review-main">
+            {#if selectedPRDetail}
+              <ReviewCoverBanner
+                pr={selectedPRDetail.merge_request}
+                owner={selectedPR.owner}
+                name={selectedPR.name}
+              />
+            {/if}
+            <DiffView
+              owner={selectedPR.owner}
+              name={selectedPR.name}
+              number={selectedPR.number}
+            />
+          </div>
+        </div>
       {/key}
     {:else}
       <PullDetail
@@ -113,6 +132,47 @@
     border-bottom: 1px solid var(--border-default);
     background: var(--bg-surface);
     flex-shrink: 0;
+  }
+
+  .review-layout {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .review-sidebar {
+    width: 280px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .review-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  @media (max-width: 720px) {
+    .review-layout {
+      flex-direction: column;
+    }
+    .review-sidebar {
+      width: 100%;
+      max-height: 35vh;
+      border-right: none;
+      border-bottom: 1px solid var(--border-default);
+    }
+    .review-main {
+      flex: 1;
+      min-height: 0;
+    }
   }
 
   .placeholder-content {
