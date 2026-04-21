@@ -3,13 +3,15 @@
   import type { DiffFile as DiffFileType, DiffHunk } from "../../api/types.js";
   import { getStores } from "../../context.js";
 
-  const { diff: diffStore } = getStores();
+  const { diff: diffStore, ai: aiStore } = getStores();
   import { tokenizeLineDual, langFromPath, type DualToken } from "../../utils/highlight.js";
   import { pairHunk } from "../../utils/diffPairing.js";
   import DiffLineComponent from "./DiffLine.svelte";
   import CollapsedRegion from "./CollapsedRegion.svelte";
   import DiffComposer from "./DiffComposer.svelte";
   import PendingCommentCard from "./PendingCommentCard.svelte";
+  import AIAskComposer from "./AIAskComposer.svelte";
+  import AIThreadCard from "./AIThreadCard.svelte";
   import type { DraftComment } from "../../stores/diff.svelte.js";
 
   interface Props {
@@ -91,6 +93,47 @@
   function isStale(c: DraftComment): boolean {
     const head = currentCommitSha();
     return head !== "" && c.commitSha !== "" && c.commitSha !== head;
+  }
+
+  // --- AI Q&A composer state ---
+
+  // openAsk: key "line:side" of a line with an open Ask composer.
+  let openAsk = $state<string | null>(null);
+  // selectionSnapshot captures the text selected at the moment Ask
+  // was clicked, so the reviewer can keep typing without worrying
+  // about losing the selection.
+  let selectionSnapshot = $state<string | null>(null);
+
+  function openAskFor(line: number, side: "LEFT" | "RIGHT"): void {
+    const selText = typeof window !== "undefined"
+      ? (window.getSelection()?.toString() ?? "")
+      : "";
+    selectionSnapshot = selText.trim() || null;
+    openAsk = `${line}:${side}`;
+  }
+
+  function closeAsk(): void {
+    openAsk = null;
+    selectionSnapshot = null;
+  }
+
+  async function submitAsk(line: number, side: "LEFT" | "RIGHT", question: string): Promise<void> {
+    const commitSha = currentCommitSha();
+    if (!commitSha) return;
+    const body: Parameters<typeof aiStore.createThread>[0] = {
+      path: file.path,
+      anchor_side: side,
+      anchor_line: line,
+      commit_sha: commitSha,
+      question,
+    };
+    if (selectionSnapshot) body.selection_text = selectionSnapshot;
+    await aiStore.createThread(body);
+    closeAsk();
+  }
+
+  function getAIThreadsAtAnchor(line: number, side: "LEFT" | "RIGHT") {
+    return aiStore.getThreadsAtAnchor(file.path, line, side);
   }
 
   // Maps a unified-line's type + available line numbers to a (line,
@@ -341,16 +384,26 @@
                           splitSide="left"
                         />
                         {#if leftAnchor}
-                          <button
-                            type="button"
-                            class="add-comment-btn"
-                            onclick={() => openComposerFor(leftAnchor.line, leftAnchor.side)}
-                            title="Add review comment"
-                          >
-                            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
-                              <path d="M5 2V8M2 5H8" stroke-linecap="round" />
-                            </svg>
-                          </button>
+                          <div class="line-actions">
+                            <button
+                              type="button"
+                              class="add-comment-btn"
+                              onclick={() => openComposerFor(leftAnchor.line, leftAnchor.side)}
+                              title="Add review comment"
+                            >
+                              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M5 2V8M2 5H8" stroke-linecap="round" />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              class="ask-ai-btn"
+                              onclick={() => openAskFor(leftAnchor.line, leftAnchor.side)}
+                              title="Ask Claude about this line"
+                            >
+                              ?
+                            </button>
+                          </div>
                         {/if}
                       </div>
                     {:else}
@@ -369,16 +422,26 @@
                           splitSide="right"
                         />
                         {#if rightAnchor}
-                          <button
-                            type="button"
-                            class="add-comment-btn"
-                            onclick={() => openComposerFor(rightAnchor.line, rightAnchor.side)}
-                            title="Add review comment"
-                          >
-                            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
-                              <path d="M5 2V8M2 5H8" stroke-linecap="round" />
-                            </svg>
-                          </button>
+                          <div class="line-actions">
+                            <button
+                              type="button"
+                              class="add-comment-btn"
+                              onclick={() => openComposerFor(rightAnchor.line, rightAnchor.side)}
+                              title="Add review comment"
+                            >
+                              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M5 2V8M2 5H8" stroke-linecap="round" />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              class="ask-ai-btn"
+                              onclick={() => openAskFor(rightAnchor.line, rightAnchor.side)}
+                              title="Ask Claude about this line"
+                            >
+                              ?
+                            </button>
+                          </div>
                         {/if}
                       </div>
                     {:else}
@@ -398,6 +461,20 @@
                     oncancel={closeComposer}
                   />
                 {/if}
+                {#if leftKey && openAsk === leftKey && leftAnchor}
+                  <AIAskComposer
+                    {...(selectionSnapshot ? { selectionPreview: selectionSnapshot } : {})}
+                    onsubmit={(q) => void submitAsk(leftAnchor.line, leftAnchor.side, q)}
+                    oncancel={closeAsk}
+                  />
+                {/if}
+                {#if rightKey && openAsk === rightKey && rightAnchor}
+                  <AIAskComposer
+                    {...(selectionSnapshot ? { selectionPreview: selectionSnapshot } : {})}
+                    onsubmit={(q) => void submitAsk(rightAnchor.line, rightAnchor.side, q)}
+                    oncancel={closeAsk}
+                  />
+                {/if}
                 {#if leftKey}
                   {@const pending = pendingByAnchor.get(leftKey) ?? []}
                   {#each pending as p (p.id)}
@@ -407,6 +484,11 @@
                       ondelete={() => diffStore.removeDraftComment(p.id)}
                     />
                   {/each}
+                  {#if leftAnchor}
+                    {#each getAIThreadsAtAnchor(leftAnchor.line, leftAnchor.side) as thread (thread.id)}
+                      <AIThreadCard {thread} repoOwner={owner} repoName={name} />
+                    {/each}
+                  {/if}
                 {/if}
                 {#if rightKey}
                   {@const pending = pendingByAnchor.get(rightKey) ?? []}
@@ -417,6 +499,11 @@
                       ondelete={() => diffStore.removeDraftComment(p.id)}
                     />
                   {/each}
+                  {#if rightAnchor}
+                    {#each getAIThreadsAtAnchor(rightAnchor.line, rightAnchor.side) as thread (thread.id)}
+                      <AIThreadCard {thread} repoOwner={owner} repoName={name} />
+                    {/each}
+                  {/if}
                 {/if}
               {/each}
             {:else}
@@ -438,22 +525,39 @@
                     tokens={getTokens(hunkIdx, lineIdx)}
                   />
                   {#if anchor}
-                    <button
-                      type="button"
-                      class="add-comment-btn"
-                      onclick={() => openComposerFor(anchor.line, anchor.side)}
-                      title="Add review comment"
-                    >
-                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M5 2V8M2 5H8" stroke-linecap="round" />
-                      </svg>
-                    </button>
+                    <div class="line-actions">
+                      <button
+                        type="button"
+                        class="add-comment-btn"
+                        onclick={() => openComposerFor(anchor.line, anchor.side)}
+                        title="Add review comment"
+                      >
+                        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M5 2V8M2 5H8" stroke-linecap="round" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="ask-ai-btn"
+                        onclick={() => openAskFor(anchor.line, anchor.side)}
+                        title="Ask Claude about this line"
+                      >
+                        ?
+                      </button>
+                    </div>
                   {/if}
                 </div>
                 {#if anchorKey && openComposer === anchorKey && anchor}
                   <DiffComposer
                     onsave={(body) => saveDraft(anchor.line, anchor.side, body)}
                     oncancel={closeComposer}
+                  />
+                {/if}
+                {#if anchorKey && openAsk === anchorKey && anchor}
+                  <AIAskComposer
+                    {...(selectionSnapshot ? { selectionPreview: selectionSnapshot } : {})}
+                    onsubmit={(q) => void submitAsk(anchor.line, anchor.side, q)}
+                    oncancel={closeAsk}
                   />
                 {/if}
                 {#if anchorKey}
@@ -465,6 +569,11 @@
                       ondelete={() => diffStore.removeDraftComment(p.id)}
                     />
                   {/each}
+                  {#if anchor}
+                    {#each getAIThreadsAtAnchor(anchor.line, anchor.side) as thread (thread.id)}
+                      <AIThreadCard {thread} repoOwner={owner} repoName={name} />
+                    {/each}
+                  {/if}
                 {/if}
               {/each}
             {/if}
@@ -664,11 +773,25 @@
     position: relative;
   }
 
-  .add-comment-btn {
+  .line-actions {
     position: absolute;
     top: 50%;
     left: 2px;
     transform: translateY(-50%);
+    display: inline-flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.1s;
+    z-index: 1;
+  }
+
+  .line-wrap--commentable:hover .line-actions,
+  .line-actions:focus-within {
+    opacity: 1;
+  }
+
+  .add-comment-btn,
+  .ask-ai-btn {
     width: 16px;
     height: 16px;
     display: inline-flex;
@@ -676,20 +799,24 @@
     justify-content: center;
     border: none;
     border-radius: 3px;
-    background: var(--accent-blue);
     color: #fff;
     cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.1s;
-    z-index: 1;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0;
   }
 
-  .line-wrap--commentable:hover .add-comment-btn,
-  .add-comment-btn:focus-visible {
-    opacity: 1;
+  .add-comment-btn {
+    background: var(--accent-blue);
   }
 
-  .add-comment-btn:hover {
+  .ask-ai-btn {
+    background: var(--accent-purple);
+  }
+
+  .add-comment-btn:hover,
+  .ask-ai-btn:hover {
     filter: brightness(1.1);
   }
 </style>

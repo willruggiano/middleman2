@@ -69,6 +69,9 @@
   import {
     createEventsStore,
   } from "./stores/events.svelte.js";
+  import {
+    createAIStore,
+  } from "./stores/ai.svelte.js";
 
   interface Props {
     client: MiddlemanClient;
@@ -204,6 +207,10 @@
       },
     });
 
+    const aiStore = createAIStore({
+      ...(cfg.basePath != null && { getBasePath: () => cfg.basePath as string }),
+    });
+
     const si: StoreInstances = {
       pulls: pullsStore,
       issues: issuesStore,
@@ -215,6 +222,7 @@
       collapsedRepos,
       settings: settingsStore,
       events: eventsStore,
+      ai: aiStore,
     };
 
     if (roborevBase) {

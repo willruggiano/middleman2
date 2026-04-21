@@ -77,6 +77,9 @@ export {
   createEventsStore,
 } from "./stores/events.svelte.js";
 export {
+  createAIStore,
+} from "./stores/ai.svelte.js";
+export {
   createDaemonStore,
 } from "./stores/roborev/daemon.svelte.js";
 export {

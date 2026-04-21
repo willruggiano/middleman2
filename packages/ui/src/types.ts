@@ -106,6 +106,7 @@ import type { DaemonStore } from "./stores/roborev/daemon.svelte.js";
 import type { JobsStore } from "./stores/roborev/jobs.svelte.js";
 import type { ReviewStore } from "./stores/roborev/review.svelte.js";
 import type { LogStore } from "./stores/roborev/log.svelte.js";
+import type { AIStore } from "./stores/ai.svelte.js";
 
 export interface StoreInstances {
   pulls: PullsStore;
@@ -118,6 +119,7 @@ export interface StoreInstances {
   collapsedRepos: CollapsedReposStore;
   settings: SettingsStore;
   events: EventsStore;
+  ai: AIStore;
   roborevDaemon?: DaemonStore;
   roborevJobs?: JobsStore;
   roborevReview?: ReviewStore;

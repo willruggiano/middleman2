@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { getStores } from "../../context.js";
 
-  const { diff: diffStore } = getStores();
+  const { diff: diffStore, ai: aiStore } = getStores();
   import DiffToolbar from "./DiffToolbar.svelte";
   import DiffFileComponent from "./DiffFile.svelte";
   import ReviewPanel from "./ReviewPanel.svelte";
@@ -21,10 +21,12 @@
 
   onMount(() => {
     void diffStore.loadDiff(owner, name, number);
+    aiStore.start(owner, name, number);
 
     return () => {
       cancelAnimationFrame(scrollRaf);
       diffStore.clearDiff();
+      aiStore.stop();
     };
   });
 
