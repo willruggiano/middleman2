@@ -278,7 +278,7 @@ func (c *FixtureClient) CreateIssueComment(
 
 // CreateReview returns an error (mutations not supported).
 func (c *FixtureClient) CreateReview(
-	_ context.Context, _, _ string, _ int, _, _ string,
+	_ context.Context, _, _ string, _ int, _ ghclient.CreateReviewOpts,
 ) (*gh.PullRequestReview, error) {
 	return nil, errFixtureReadOnly
 }

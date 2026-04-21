@@ -233,7 +233,7 @@ func (m *mockClient) GetRepository(
 }
 
 func (m *mockClient) CreateReview(
-	_ context.Context, _, _ string, _ int, _ string, _ string,
+	_ context.Context, _, _ string, _ int, _ CreateReviewOpts,
 ) (*gh.PullRequestReview, error) {
 	m.trackCall()
 	id := int64(1)

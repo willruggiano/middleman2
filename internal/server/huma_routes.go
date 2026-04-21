@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -135,6 +136,35 @@ type approvePRInput struct {
 	Body   struct {
 		Body string `json:"body"`
 	}
+}
+
+type submitReviewComment struct {
+	Path      string `json:"path"                doc:"File path the comment applies to"`
+	Line      int    `json:"line"                doc:"1-based line in the file (at the commit)"`
+	Side      string `json:"side,omitempty"      doc:"LEFT or RIGHT; RIGHT when omitted"`
+	StartLine int    `json:"start_line,omitempty" doc:"For multi-line comments; omit for single-line"`
+	Body      string `json:"body"                doc:"Comment body (markdown)"`
+}
+
+type submitReviewInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+	Body   struct {
+		Event    string                `json:"event"             doc:"APPROVE, REQUEST_CHANGES, or COMMENT"`
+		Body     string                `json:"body,omitempty"    doc:"Optional top-level review body"`
+		CommitID string                `json:"commit_id,omitempty" doc:"PR head SHA; required when comments anchor to a specific commit"`
+		Comments []submitReviewComment `json:"comments,omitempty" doc:"Inline review comments to include"`
+	}
+}
+
+type submitReviewResponseBody struct {
+	ReviewID int64  `json:"review_id"`
+	State    string `json:"state"`
+}
+
+type submitReviewOutput struct {
+	Body submitReviewResponseBody
 }
 
 type actionStatusBody struct {
@@ -344,6 +374,7 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Get(api, "/repos/{owner}/{name}", s.getRepo)
 	huma.Get(api, "/repos/{owner}/{name}/comment-autocomplete", s.getCommentAutocomplete)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/approve", s.approvePR)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/review", s.submitReview)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/approve-workflows", s.approveWorkflows)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/ready-for-review", s.readyForReview)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/merge", s.mergePR)
@@ -1014,7 +1045,10 @@ func (s *Server) approvePR(ctx context.Context, input *approvePRInput) (*actionS
 		return nil, huma.Error404NotFound(err.Error())
 	}
 
-	review, err := client.CreateReview(ctx, input.Owner, input.Name, input.Number, "APPROVE", input.Body.Body)
+	review, err := client.CreateReview(ctx, input.Owner, input.Name, input.Number, ghclient.CreateReviewOpts{
+		Event: "APPROVE",
+		Body:  input.Body.Body,
+	})
 	if err != nil {
 		return nil, huma.Error502BadGateway("GitHub API error")
 	}
@@ -1027,6 +1061,78 @@ func (s *Server) approvePR(ctx context.Context, input *approvePRInput) (*actionS
 	}
 
 	return &actionStatusOutput{Body: actionStatusBody{Status: "approved"}}, nil
+}
+
+// submitReview posts a review with optional inline comments. The caller
+// supplies the review event (APPROVE/REQUEST_CHANGES/COMMENT), an
+// optional top-level body, and a list of inline comments. Each comment
+// must reference a path + line that exists in the PR's head at the
+// provided commit_id — GitHub rejects comments that don't resolve.
+func (s *Server) submitReview(ctx context.Context, input *submitReviewInput) (*submitReviewOutput, error) {
+	client, err := s.syncer.ClientForRepo(input.Owner, input.Name)
+	if err != nil {
+		return nil, huma.Error404NotFound(err.Error())
+	}
+
+	switch input.Body.Event {
+	case "APPROVE", "REQUEST_CHANGES", "COMMENT":
+	default:
+		return nil, huma.Error400BadRequest("event must be APPROVE, REQUEST_CHANGES, or COMMENT")
+	}
+	if input.Body.Event == "REQUEST_CHANGES" && strings.TrimSpace(input.Body.Body) == "" && len(input.Body.Comments) == 0 {
+		return nil, huma.Error400BadRequest("REQUEST_CHANGES requires a review body or at least one inline comment")
+	}
+
+	comments := make([]ghclient.ReviewComment, 0, len(input.Body.Comments))
+	for i, c := range input.Body.Comments {
+		if c.Path == "" {
+			return nil, huma.Error400BadRequest(fmt.Sprintf("comment[%d]: path is required", i))
+		}
+		if c.Line <= 0 {
+			return nil, huma.Error400BadRequest(fmt.Sprintf("comment[%d]: line must be positive", i))
+		}
+		if strings.TrimSpace(c.Body) == "" {
+			return nil, huma.Error400BadRequest(fmt.Sprintf("comment[%d]: body is required", i))
+		}
+		side := c.Side
+		if side == "" {
+			side = "RIGHT"
+		}
+		if side != "LEFT" && side != "RIGHT" {
+			return nil, huma.Error400BadRequest(fmt.Sprintf("comment[%d]: side must be LEFT or RIGHT", i))
+		}
+		comments = append(comments, ghclient.ReviewComment{
+			Path:      c.Path,
+			Line:      c.Line,
+			Side:      side,
+			StartLine: c.StartLine,
+			Body:      c.Body,
+		})
+	}
+
+	review, err := client.CreateReview(ctx, input.Owner, input.Name, input.Number, ghclient.CreateReviewOpts{
+		Event:    input.Body.Event,
+		Body:     input.Body.Body,
+		CommitID: input.Body.CommitID,
+		Comments: comments,
+	})
+	if err != nil {
+		return nil, huma.Error502BadGateway("submit review: " + err.Error())
+	}
+
+	// Persist the review body as an event so it shows up in the timeline
+	// without waiting for the next sync cycle. Inline comments land via
+	// the review_comment sync path on the next refresh.
+	ref := repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number}
+	if mrID, lookupErr := s.lookupMRID(ctx, ref); lookupErr == nil {
+		event := ghclient.NormalizeReviewEvent(mrID, review)
+		_ = s.db.UpsertMREvents(ctx, []db.MREvent{event})
+	}
+
+	return &submitReviewOutput{Body: submitReviewResponseBody{
+		ReviewID: review.GetID(),
+		State:    review.GetState(),
+	}}, nil
 }
 
 func (s *Server) approveWorkflows(ctx context.Context, input *repoNumberInput) (*actionStatusOutput, error) {

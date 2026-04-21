@@ -571,6 +571,50 @@ type StarredRequest struct {
 	Owner    string  `json:"owner"`
 }
 
+// SubmitReviewComment defines model for SubmitReviewComment.
+type SubmitReviewComment struct {
+	// Body Comment body (markdown)
+	Body string `json:"body"`
+
+	// Line 1-based line in the file (at the commit)
+	Line int64 `json:"line"`
+
+	// Path File path the comment applies to
+	Path string `json:"path"`
+
+	// Side LEFT or RIGHT; RIGHT when omitted
+	Side *string `json:"side,omitempty"`
+
+	// StartLine For multi-line comments; omit for single-line
+	StartLine *int64 `json:"start_line,omitempty"`
+}
+
+// SubmitReviewInputBody defines model for SubmitReviewInputBody.
+type SubmitReviewInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// Body Optional top-level review body
+	Body *string `json:"body,omitempty"`
+
+	// Comments Inline review comments to include
+	Comments *[]SubmitReviewComment `json:"comments,omitempty"`
+
+	// CommitId PR head SHA; required when comments anchor to a specific commit
+	CommitId *string `json:"commit_id,omitempty"`
+
+	// Event APPROVE, REQUEST_CHANGES, or COMMENT
+	Event string `json:"event"`
+}
+
+// SubmitReviewResponseBody defines model for SubmitReviewResponseBody.
+type SubmitReviewResponseBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string `json:"$schema,omitempty"`
+	ReviewId int64   `json:"review_id"`
+	State    string  `json:"state"`
+}
+
 // SyncStatus defines model for SyncStatus.
 type SyncStatus struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -707,6 +751,9 @@ type SetPrGithubStateJSONRequestBody = GithubStateInputBody
 
 // PostReposByOwnerByNamePullsByNumberMergeJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberMerge for application/json ContentType.
 type PostReposByOwnerByNamePullsByNumberMergeJSONRequestBody = MergePRInputBody
+
+// PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody defines body for PostReposByOwnerByNamePullsByNumberReview for application/json ContentType.
+type PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody = SubmitReviewInputBody
 
 // SetKanbanStateJSONRequestBody defines body for SetKanbanState for application/json ContentType.
 type SetKanbanStateJSONRequestBody = SetKanbanStateInputBody
@@ -878,6 +925,11 @@ type ClientInterface interface {
 
 	// PostReposByOwnerByNamePullsByNumberReadyForReview request
 	PostReposByOwnerByNamePullsByNumberReadyForReview(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostReposByOwnerByNamePullsByNumberReviewWithBody request with any body
+	PostReposByOwnerByNamePullsByNumberReviewWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PostReposByOwnerByNamePullsByNumberReview(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReposByOwnerByNamePullsByNumberStack request
 	GetReposByOwnerByNamePullsByNumberStack(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1286,6 +1338,30 @@ func (c *Client) PostReposByOwnerByNamePullsByNumberMerge(ctx context.Context, o
 
 func (c *Client) PostReposByOwnerByNamePullsByNumberReadyForReview(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPostReposByOwnerByNamePullsByNumberReadyForReviewRequest(c.Server, owner, name, number)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberReviewWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberReviewRequestWithBody(c.Server, owner, name, number, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberReview(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberReviewRequest(c.Server, owner, name, number, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3042,6 +3118,67 @@ func NewPostReposByOwnerByNamePullsByNumberReadyForReviewRequest(server string, 
 	return req, nil
 }
 
+// NewPostReposByOwnerByNamePullsByNumberReviewRequest calls the generic PostReposByOwnerByNamePullsByNumberReview builder with application/json body
+func NewPostReposByOwnerByNamePullsByNumberReviewRequest(server string, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostReposByOwnerByNamePullsByNumberReviewRequestWithBody(server, owner, name, number, "application/json", bodyReader)
+}
+
+// NewPostReposByOwnerByNamePullsByNumberReviewRequestWithBody generates requests for PostReposByOwnerByNamePullsByNumberReview with any type of body
+func NewPostReposByOwnerByNamePullsByNumberReviewRequestWithBody(server string, owner string, name string, number int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/review", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetReposByOwnerByNamePullsByNumberStackRequest generates requests for GetReposByOwnerByNamePullsByNumberStack
 func NewGetReposByOwnerByNamePullsByNumberStackRequest(server string, owner string, name string, number int64) (*http.Request, error) {
 	var err error
@@ -3668,6 +3805,11 @@ type ClientWithResponsesInterface interface {
 	// PostReposByOwnerByNamePullsByNumberReadyForReviewWithResponse request
 	PostReposByOwnerByNamePullsByNumberReadyForReviewWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReadyForReviewResponse, error)
 
+	// PostReposByOwnerByNamePullsByNumberReviewWithBodyWithResponse request with any body
+	PostReposByOwnerByNamePullsByNumberReviewWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewResponse, error)
+
+	PostReposByOwnerByNamePullsByNumberReviewWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewResponse, error)
+
 	// GetReposByOwnerByNamePullsByNumberStackWithResponse request
 	GetReposByOwnerByNamePullsByNumberStackWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberStackResponse, error)
 
@@ -4265,6 +4407,29 @@ func (r PostReposByOwnerByNamePullsByNumberReadyForReviewResponse) StatusCode() 
 	return 0
 }
 
+type PostReposByOwnerByNamePullsByNumberReviewResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *SubmitReviewResponseBody
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PostReposByOwnerByNamePullsByNumberReviewResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostReposByOwnerByNamePullsByNumberReviewResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetReposByOwnerByNamePullsByNumberStackResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
@@ -4806,6 +4971,23 @@ func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberReadyForReviewW
 		return nil, err
 	}
 	return ParsePostReposByOwnerByNamePullsByNumberReadyForReviewResponse(rsp)
+}
+
+// PostReposByOwnerByNamePullsByNumberReviewWithBodyWithResponse request with arbitrary body returning *PostReposByOwnerByNamePullsByNumberReviewResponse
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberReviewWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberReviewWithBody(ctx, owner, name, number, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberReviewResponse(rsp)
+}
+
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberReviewWithResponse(ctx context.Context, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReviewResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberReview(ctx, owner, name, number, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberReviewResponse(rsp)
 }
 
 // GetReposByOwnerByNamePullsByNumberStackWithResponse request returning *GetReposByOwnerByNamePullsByNumberStackResponse
@@ -5723,6 +5905,39 @@ func ParsePostReposByOwnerByNamePullsByNumberReadyForReviewResponse(rsp *http.Re
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ActionStatusBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostReposByOwnerByNamePullsByNumberReviewResponse parses an HTTP response from a PostReposByOwnerByNamePullsByNumberReviewWithResponse call
+func ParsePostReposByOwnerByNamePullsByNumberReviewResponse(rsp *http.Response) (*PostReposByOwnerByNamePullsByNumberReviewResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostReposByOwnerByNamePullsByNumberReviewResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SubmitReviewResponseBody
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

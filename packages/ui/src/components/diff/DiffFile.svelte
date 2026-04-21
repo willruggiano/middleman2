@@ -8,6 +8,9 @@
   import { pairHunk } from "../../utils/diffPairing.js";
   import DiffLineComponent from "./DiffLine.svelte";
   import CollapsedRegion from "./CollapsedRegion.svelte";
+  import DiffComposer from "./DiffComposer.svelte";
+  import PendingCommentCard from "./PendingCommentCard.svelte";
+  import type { DraftComment } from "../../stores/diff.svelte.js";
 
   interface Props {
     file: DiffFileType;
@@ -26,6 +29,83 @@
   function toggleViewed(e: Event): void {
     e.stopPropagation();
     diffStore.markFileReviewed(file.path, !viewed);
+  }
+
+  // Draft/pending comment state, scoped to this file.
+  // openComposer keys by `${line}:${side}`; null means no composer open.
+  let openComposer = $state<string | null>(null);
+
+  const pendingComments = $derived<DraftComment[]>(
+    diffStore.getDraftCommentsForPath(file.path),
+  );
+
+  // Map of pending comments grouped by anchor key for fast lookup while
+  // rendering lines.
+  const pendingByAnchor = $derived.by(() => {
+    const map = new Map<string, DraftComment[]>();
+    for (const c of pendingComments) {
+      const key = `${c.line}:${c.side}`;
+      const arr = map.get(key) ?? [];
+      arr.push(c);
+      map.set(key, arr);
+    }
+    return map;
+  });
+
+  // The SHA we anchor new comments against — the newest commit in the
+  // currently scoped diff. Falls back to "HEAD" marker for head scope
+  // when commits haven't loaded yet, in which case the publish step
+  // will attach the actual PR head SHA.
+  function currentCommitSha(): string {
+    const scope = diffStore.getScope();
+    if (scope.kind === "commit") return scope.sha;
+    if (scope.kind === "range") return scope.toSha;
+    const commits = diffStore.getCommits();
+    if (commits && commits.length > 0) return commits[0]!.sha;
+    return "";
+  }
+
+  function openComposerFor(line: number, side: "LEFT" | "RIGHT"): void {
+    openComposer = `${line}:${side}`;
+  }
+
+  function closeComposer(): void {
+    openComposer = null;
+  }
+
+  function saveDraft(line: number, side: "LEFT" | "RIGHT", body: string): void {
+    const commitSha = currentCommitSha();
+    diffStore.addDraftComment({
+      path: file.path,
+      line,
+      side,
+      commitSha,
+      body,
+    });
+    closeComposer();
+  }
+
+  // Stale when the comment was written against a commit that is no
+  // longer the head we would publish against. Stale comments may fail
+  // to post — we warn but don't block.
+  function isStale(c: DraftComment): boolean {
+    const head = currentCommitSha();
+    return head !== "" && c.commitSha !== "" && c.commitSha !== head;
+  }
+
+  // Maps a unified-line's type + available line numbers to a (line,
+  // side) anchor for a new comment. Context lines anchor to the new
+  // file (RIGHT) by convention; this matches GitHub's behavior.
+  function anchorFor(
+    lineType: "context" | "add" | "delete",
+    oldNum?: number,
+    newNum?: number,
+  ): { line: number; side: "LEFT" | "RIGHT" } | null {
+    if (lineType === "delete" && oldNum != null) {
+      return { line: oldNum, side: "LEFT" };
+    }
+    if (newNum != null) return { line: newNum, side: "RIGHT" };
+    return null;
   }
 
   // Auto-mark viewed when the file has been scrolled past (its bottom
@@ -240,36 +320,104 @@
                 <span class="hunk-text">@@ -{hunk.old_start},{hunk.old_count} +{hunk.new_start},{hunk.new_count} @@{hunk.section ? ` ${hunk.section}` : ""}</span>
               </div>
               {#each pairHunk(hunk) as row}
+                {@const leftAnchor = row.left
+                  ? anchorFor(row.left.line.type, row.left.line.old_num ?? undefined, undefined)
+                  : null}
+                {@const rightAnchor = row.right
+                  ? anchorFor(row.right.line.type, undefined, row.right.line.new_num ?? undefined)
+                  : null}
+                {@const leftKey = leftAnchor ? `${leftAnchor.line}:${leftAnchor.side}` : null}
+                {@const rightKey = rightAnchor ? `${rightAnchor.line}:${rightAnchor.side}` : null}
                 <div class="ss-row">
                   <div class="ss-cell ss-cell--left">
                     {#if row.left}
-                      <DiffLineComponent
-                        type={row.left.line.type}
-                        content={row.left.line.content}
-                        {...(row.left.line.old_num != null ? { oldNum: row.left.line.old_num } : {})}
-                        {...(row.left.line.no_newline ? { noNewline: row.left.line.no_newline } : {})}
-                        tokens={getTokens(hunkIdx, row.left.lineIdx)}
-                        splitSide="left"
-                      />
+                      <div class="line-wrap" class:line-wrap--commentable={!!leftAnchor}>
+                        <DiffLineComponent
+                          type={row.left.line.type}
+                          content={row.left.line.content}
+                          {...(row.left.line.old_num != null ? { oldNum: row.left.line.old_num } : {})}
+                          {...(row.left.line.no_newline ? { noNewline: row.left.line.no_newline } : {})}
+                          tokens={getTokens(hunkIdx, row.left.lineIdx)}
+                          splitSide="left"
+                        />
+                        {#if leftAnchor}
+                          <button
+                            type="button"
+                            class="add-comment-btn"
+                            onclick={() => openComposerFor(leftAnchor.line, leftAnchor.side)}
+                            title="Add review comment"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
+                              <path d="M5 2V8M2 5H8" stroke-linecap="round" />
+                            </svg>
+                          </button>
+                        {/if}
+                      </div>
                     {:else}
                       <div class="ss-empty"></div>
                     {/if}
                   </div>
                   <div class="ss-cell ss-cell--right">
                     {#if row.right}
-                      <DiffLineComponent
-                        type={row.right.line.type}
-                        content={row.right.line.content}
-                        {...(row.right.line.new_num != null ? { newNum: row.right.line.new_num } : {})}
-                        {...(row.right.line.no_newline ? { noNewline: row.right.line.no_newline } : {})}
-                        tokens={getTokens(hunkIdx, row.right.lineIdx)}
-                        splitSide="right"
-                      />
+                      <div class="line-wrap" class:line-wrap--commentable={!!rightAnchor}>
+                        <DiffLineComponent
+                          type={row.right.line.type}
+                          content={row.right.line.content}
+                          {...(row.right.line.new_num != null ? { newNum: row.right.line.new_num } : {})}
+                          {...(row.right.line.no_newline ? { noNewline: row.right.line.no_newline } : {})}
+                          tokens={getTokens(hunkIdx, row.right.lineIdx)}
+                          splitSide="right"
+                        />
+                        {#if rightAnchor}
+                          <button
+                            type="button"
+                            class="add-comment-btn"
+                            onclick={() => openComposerFor(rightAnchor.line, rightAnchor.side)}
+                            title="Add review comment"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
+                              <path d="M5 2V8M2 5H8" stroke-linecap="round" />
+                            </svg>
+                          </button>
+                        {/if}
+                      </div>
                     {:else}
                       <div class="ss-empty"></div>
                     {/if}
                   </div>
                 </div>
+                {#if leftKey && openComposer === leftKey && leftAnchor}
+                  <DiffComposer
+                    onsave={(body) => saveDraft(leftAnchor.line, leftAnchor.side, body)}
+                    oncancel={closeComposer}
+                  />
+                {/if}
+                {#if rightKey && openComposer === rightKey && rightAnchor}
+                  <DiffComposer
+                    onsave={(body) => saveDraft(rightAnchor.line, rightAnchor.side, body)}
+                    oncancel={closeComposer}
+                  />
+                {/if}
+                {#if leftKey}
+                  {@const pending = pendingByAnchor.get(leftKey) ?? []}
+                  {#each pending as p (p.id)}
+                    <PendingCommentCard
+                      comment={p}
+                      stale={isStale(p)}
+                      ondelete={() => diffStore.removeDraftComment(p.id)}
+                    />
+                  {/each}
+                {/if}
+                {#if rightKey}
+                  {@const pending = pendingByAnchor.get(rightKey) ?? []}
+                  {#each pending as p (p.id)}
+                    <PendingCommentCard
+                      comment={p}
+                      stale={isStale(p)}
+                      ondelete={() => diffStore.removeDraftComment(p.id)}
+                    />
+                  {/each}
+                {/if}
               {/each}
             {:else}
               <div class="hunk-header">
@@ -278,14 +426,46 @@
                 <span class="hunk-text">@@ -{hunk.old_start},{hunk.old_count} +{hunk.new_start},{hunk.new_count} @@{hunk.section ? ` ${hunk.section}` : ""}</span>
               </div>
               {#each hunk.lines as line, lineIdx}
-                <DiffLineComponent
-                  type={line.type}
-                  content={line.content}
-                  {...(line.old_num != null ? { oldNum: line.old_num } : {})}
-                  {...(line.new_num != null ? { newNum: line.new_num } : {})}
-                  {...(line.no_newline ? { noNewline: line.no_newline } : {})}
-                  tokens={getTokens(hunkIdx, lineIdx)}
-                />
+                {@const anchor = anchorFor(line.type, line.old_num ?? undefined, line.new_num ?? undefined)}
+                {@const anchorKey = anchor ? `${anchor.line}:${anchor.side}` : null}
+                <div class="line-wrap" class:line-wrap--commentable={!!anchor}>
+                  <DiffLineComponent
+                    type={line.type}
+                    content={line.content}
+                    {...(line.old_num != null ? { oldNum: line.old_num } : {})}
+                    {...(line.new_num != null ? { newNum: line.new_num } : {})}
+                    {...(line.no_newline ? { noNewline: line.no_newline } : {})}
+                    tokens={getTokens(hunkIdx, lineIdx)}
+                  />
+                  {#if anchor}
+                    <button
+                      type="button"
+                      class="add-comment-btn"
+                      onclick={() => openComposerFor(anchor.line, anchor.side)}
+                      title="Add review comment"
+                    >
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 2V8M2 5H8" stroke-linecap="round" />
+                      </svg>
+                    </button>
+                  {/if}
+                </div>
+                {#if anchorKey && openComposer === anchorKey && anchor}
+                  <DiffComposer
+                    onsave={(body) => saveDraft(anchor.line, anchor.side, body)}
+                    oncancel={closeComposer}
+                  />
+                {/if}
+                {#if anchorKey}
+                  {@const pending = pendingByAnchor.get(anchorKey) ?? []}
+                  {#each pending as p (p.id)}
+                    <PendingCommentCard
+                      comment={p}
+                      stale={isStale(p)}
+                      ondelete={() => diffStore.removeDraftComment(p.id)}
+                    />
+                  {/each}
+                {/if}
               {/each}
             {/if}
           {/each}
@@ -476,5 +656,40 @@
   .hunk-text {
     padding: 2px 12px;
     white-space: pre;
+  }
+
+  /* Wraps a diff line so the add-comment button can be positioned over
+     its left edge. Only appears on hover for commentable lines. */
+  .line-wrap {
+    position: relative;
+  }
+
+  .add-comment-btn {
+    position: absolute;
+    top: 50%;
+    left: 2px;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 3px;
+    background: var(--accent-blue);
+    color: #fff;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.1s;
+    z-index: 1;
+  }
+
+  .line-wrap--commentable:hover .add-comment-btn,
+  .add-comment-btn:focus-visible {
+    opacity: 1;
+  }
+
+  .add-comment-btn:hover {
+    filter: brightness(1.1);
   }
 </style>

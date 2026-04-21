@@ -391,6 +391,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post repos by owner by name pulls by number review */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/stack": {
         parameters: {
             query?: never;
@@ -1227,6 +1244,51 @@ export interface components {
             /** Format: int64 */
             number: number;
             owner: string;
+        };
+        SubmitReviewComment: {
+            /** @description Comment body (markdown) */
+            body: string;
+            /**
+             * Format: int64
+             * @description 1-based line in the file (at the commit)
+             */
+            line: number;
+            /** @description File path the comment applies to */
+            path: string;
+            /** @description LEFT or RIGHT; RIGHT when omitted */
+            side?: string;
+            /**
+             * Format: int64
+             * @description For multi-line comments; omit for single-line
+             */
+            start_line?: number;
+        };
+        SubmitReviewInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SubmitReviewInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Optional top-level review body */
+            body?: string;
+            /** @description Inline review comments to include */
+            comments?: components["schemas"]["SubmitReviewComment"][] | null;
+            /** @description PR head SHA; required when comments anchor to a specific commit */
+            commit_id?: string;
+            /** @description APPROVE, REQUEST_CHANGES, or COMMENT */
+            event: string;
+        };
+        SubmitReviewResponseBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SubmitReviewResponseBody.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            review_id: number;
+            state: string;
         };
         SyncStatus: {
             /**
@@ -2113,6 +2175,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActionStatusBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitReviewInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmitReviewResponseBody"];
                 };
             };
             /** @description Error */

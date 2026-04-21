@@ -30,6 +30,28 @@ type EditPullRequestOpts struct {
 	Body  *string
 }
 
+// ReviewComment is one inline comment to include when submitting a
+// review. Line/Side anchor the comment to the file's current state in
+// the given commit; StartLine is set for multi-line comments only.
+type ReviewComment struct {
+	Path      string
+	Line      int
+	Side      string // "RIGHT" (added/modified line) or "LEFT" (removed line)
+	StartLine int    // 0 means single-line comment
+	Body      string
+}
+
+// CreateReviewOpts bundles the fields that GitHub's review endpoint
+// accepts. Comments may be empty — a pure review body + event is
+// legal. CommitID should be the PR head SHA at the time of review to
+// ensure comment anchors resolve.
+type CreateReviewOpts struct {
+	Event    string // "APPROVE", "REQUEST_CHANGES", or "COMMENT"
+	Body     string
+	CommitID string
+	Comments []ReviewComment
+}
+
 // Client is the interface for interacting with the GitHub API.
 type Client interface {
 	ListOpenPullRequests(ctx context.Context, owner, repo string) ([]*gh.PullRequest, error)
@@ -49,7 +71,7 @@ type Client interface {
 	ApproveWorkflowRun(ctx context.Context, owner, repo string, runID int64) error
 	CreateIssueComment(ctx context.Context, owner, repo string, number int, body string) (*gh.IssueComment, error)
 	GetRepository(ctx context.Context, owner, repo string) (*gh.Repository, error)
-	CreateReview(ctx context.Context, owner, repo string, number int, event string, body string) (*gh.PullRequestReview, error)
+	CreateReview(ctx context.Context, owner, repo string, number int, opts CreateReviewOpts) (*gh.PullRequestReview, error)
 	MarkPullRequestReadyForReview(ctx context.Context, owner, repo string, number int) (*gh.PullRequest, error)
 	MergePullRequest(ctx context.Context, owner, repo string, number int, commitTitle, commitMessage, method string) (*gh.PullRequestMergeResult, error)
 	EditPullRequest(ctx context.Context, owner, repo string, number int, opts EditPullRequestOpts) (*gh.PullRequest, error)
@@ -769,14 +791,35 @@ func (c *liveClient) GetRepository(
 
 func (c *liveClient) CreateReview(
 	ctx context.Context, owner, repo string, number int,
-	event string, body string,
+	opts CreateReviewOpts,
 ) (*gh.PullRequestReview, error) {
-	review, resp, err := c.gh.PullRequests.CreateReview(
-		ctx, owner, repo, number, &gh.PullRequestReviewRequest{
-			Event: new(event),
-			Body:  new(body),
-		},
-	)
+	req := &gh.PullRequestReviewRequest{
+		Event: new(opts.Event),
+		Body:  new(opts.Body),
+	}
+	if opts.CommitID != "" {
+		req.CommitID = new(opts.CommitID)
+	}
+	if len(opts.Comments) > 0 {
+		drafts := make([]*gh.DraftReviewComment, len(opts.Comments))
+		for i, c := range opts.Comments {
+			d := &gh.DraftReviewComment{
+				Path: new(c.Path),
+				Body: new(c.Body),
+				Line: new(c.Line),
+			}
+			if c.Side != "" {
+				d.Side = new(c.Side)
+			}
+			if c.StartLine > 0 {
+				d.StartLine = new(c.StartLine)
+			}
+			drafts[i] = d
+		}
+		req.Comments = drafts
+	}
+
+	review, resp, err := c.gh.PullRequests.CreateReview(ctx, owner, repo, number, req)
 	c.trackRate(resp)
 	if err != nil {
 		return nil, fmt.Errorf(

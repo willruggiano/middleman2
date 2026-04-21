@@ -5,6 +5,7 @@
   const { diff: diffStore } = getStores();
   import DiffToolbar from "./DiffToolbar.svelte";
   import DiffFileComponent from "./DiffFile.svelte";
+  import ReviewPanel from "./ReviewPanel.svelte";
 
   interface Props {
     owner: string;
@@ -16,6 +17,7 @@
 
   let diffArea: HTMLDivElement | undefined = $state();
   let scrollRaf = 0;
+  let reviewPanelOpen = $state(false);
 
   onMount(() => {
     void diffStore.loadDiff(owner, name, number);
@@ -151,7 +153,7 @@
       </div>
     {:else if diff}
       <div class="diff-main">
-        <DiffToolbar />
+        <DiffToolbar onReviewClick={() => { reviewPanelOpen = true; }} />
         <div
           class="diff-area"
           bind:this={diffArea}
@@ -188,6 +190,10 @@
     {/if}
   </div>
 </div>
+
+{#if reviewPanelOpen}
+  <ReviewPanel {owner} {name} {number} onclose={() => { reviewPanelOpen = false; }} />
+{/if}
 
 <style>
   .diff-view {

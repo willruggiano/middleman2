@@ -47,6 +47,8 @@ type mockGH struct {
 	listOpenPRsErr            error
 	listOpenIssuesFn          func(context.Context, string, string) ([]*gh.Issue, error)
 	listIssueCommentsErr      error
+	createReviewFn            func(context.Context, string, string, int, ghclient.CreateReviewOpts) (*gh.PullRequestReview, error)
+	lastCreateReviewOpts      *ghclient.CreateReviewOpts
 }
 
 func (m *mockGH) ListOpenPullRequests(ctx context.Context, owner, repo string) ([]*gh.PullRequest, error) {
@@ -183,8 +185,12 @@ func (m *mockGH) GetRepository(
 }
 
 func (m *mockGH) CreateReview(
-	_ context.Context, _, _ string, _ int, _ string, _ string,
+	ctx context.Context, owner, repo string, number int, opts ghclient.CreateReviewOpts,
 ) (*gh.PullRequestReview, error) {
+	m.lastCreateReviewOpts = &opts
+	if m.createReviewFn != nil {
+		return m.createReviewFn(ctx, owner, repo, number, opts)
+	}
 	id := int64(99)
 	state := "APPROVED"
 	return &gh.PullRequestReview{ID: &id, State: &state}, nil
@@ -901,6 +907,88 @@ func TestAPISyncPRIncludesWorkflowApproval(t *testing.T) {
 	assert.True(resp.JSON200.WorkflowApproval.Checked)
 	assert.True(resp.JSON200.WorkflowApproval.Required)
 	assert.Equal(int64(1), resp.JSON200.WorkflowApproval.Count)
+}
+
+func TestAPISubmitReview_WithInlineComments(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	mock := &mockGH{}
+	srv, _ := setupTestServerWithMock(t, mock)
+	client := setupTestClient(t, srv)
+	body := "Overall LGTM"
+	commitID := "abc1234"
+	side := "RIGHT"
+	line := int64(42)
+	commentBody := "Consider renaming this"
+
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody{
+			Event:    "COMMENT",
+			Body:     &body,
+			CommitId: &commitID,
+			Comments: &[]generated.SubmitReviewComment{{
+				Path: "src/x.go",
+				Line: line,
+				Side: &side,
+				Body: commentBody,
+			}},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	assert.Equal(int64(99), resp.JSON200.ReviewId)
+
+	// Verify the request shaped for GitHub matches what we sent.
+	require.NotNil(mock.lastCreateReviewOpts)
+	opts := mock.lastCreateReviewOpts
+	assert.Equal("COMMENT", opts.Event)
+	assert.Equal("Overall LGTM", opts.Body)
+	assert.Equal("abc1234", opts.CommitID)
+	require.Len(opts.Comments, 1)
+	assert.Equal("src/x.go", opts.Comments[0].Path)
+	assert.Equal(42, opts.Comments[0].Line)
+	assert.Equal("RIGHT", opts.Comments[0].Side)
+	assert.Equal("Consider renaming this", opts.Comments[0].Body)
+}
+
+func TestAPISubmitReview_RejectsInvalidEvent(t *testing.T) {
+	mock := &mockGH{}
+	srv, _ := setupTestServerWithMock(t, mock)
+	client := setupTestClient(t, srv)
+
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody{Event: "BOGUS"},
+	)
+	require.NoError(t, err)
+	Assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
+}
+
+func TestAPISubmitReview_DefaultsSideToRight(t *testing.T) {
+	require := require.New(t)
+	mock := &mockGH{}
+	srv, _ := setupTestServerWithMock(t, mock)
+	client := setupTestClient(t, srv)
+	b := "pls"
+
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody{
+			Event: "COMMENT",
+			Comments: &[]generated.SubmitReviewComment{{
+				Path: "a.go",
+				Line: 1,
+				Body: b,
+			}},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(mock.lastCreateReviewOpts)
+	require.Len(mock.lastCreateReviewOpts.Comments, 1)
+	require.Equal("RIGHT", mock.lastCreateReviewOpts.Comments[0].Side)
 }
 
 func TestAPIApproveWorkflows(t *testing.T) {

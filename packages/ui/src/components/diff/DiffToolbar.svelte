@@ -1,12 +1,21 @@
 <script lang="ts">
   import { getStores } from "../../context.js";
 
+  interface Props {
+    onReviewClick?: () => void;
+  }
+
+  const { onReviewClick }: Props = $props();
+
   const { diff } = getStores();
   const tabOptions = [1, 2, 4, 8] as const;
   const layoutOptions = [
     { value: "unified", label: "Unified" },
     { value: "split", label: "Split" },
   ] as const;
+
+  const pendingCount = $derived(diff.getDraft().comments.length);
+  const draftEvent = $derived(diff.getDraft().event);
 </script>
 
 <div class="diff-toolbar">
@@ -51,6 +60,33 @@
       <span class="toggle-knob"></span>
     </button>
   </div>
+  {#if onReviewClick}
+    <div class="toolbar-group toolbar-group--right">
+      <button
+        type="button"
+        class="review-btn"
+        class:review-btn--has-pending={pendingCount > 0}
+        onclick={onReviewClick}
+        title={pendingCount > 0
+          ? `Finish review (${pendingCount} pending comment${pendingCount === 1 ? "" : "s"})`
+          : "Finish review"}
+      >
+        Review
+        {#if pendingCount > 0}
+          <span class="review-btn__count">{pendingCount}</span>
+        {/if}
+        {#if draftEvent !== "COMMENT"}
+          <span
+            class="review-btn__event"
+            class:review-btn__event--approve={draftEvent === "APPROVE"}
+            class:review-btn__event--changes={draftEvent === "REQUEST_CHANGES"}
+          >
+            {draftEvent === "APPROVE" ? "✓" : "✗"}
+          </span>
+        {/if}
+      </button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -109,6 +145,58 @@
 
   .segment--active:hover {
     background: var(--accent-blue);
+  }
+
+  .toolbar-group--right {
+    margin-left: auto;
+  }
+
+  .review-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-muted);
+    background: var(--bg-inset);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .review-btn:hover {
+    background: var(--bg-surface-hover);
+  }
+
+  .review-btn--has-pending {
+    border-color: var(--accent-amber);
+    background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-inset));
+  }
+
+  .review-btn__count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    padding: 0 5px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    border-radius: 999px;
+    background: var(--accent-amber);
+    color: #000;
+  }
+
+  .review-btn__event {
+    font-size: 11px;
+  }
+
+  .review-btn__event--approve {
+    color: var(--accent-green);
+  }
+
+  .review-btn__event--changes {
+    color: var(--accent-red);
   }
 
   .toggle-switch {

@@ -99,6 +99,72 @@ function saveReviewedCommits(rc: Record<string, string[]>): void {
   safeSetItem("diff-reviewed-commits", JSON.stringify(rc));
 }
 
+// Per-PR draft review state. Kept in localStorage so reloads don't
+// lose pending comments. commit_id on each comment is critical —
+// GitHub refuses to anchor review comments unless the referenced
+// commit is part of the PR's history.
+export type ReviewEvent = "APPROVE" | "COMMENT" | "REQUEST_CHANGES";
+
+export interface DraftComment {
+  id: string;          // local UUID, used for delete/update
+  path: string;
+  line: number;
+  side: "LEFT" | "RIGHT";
+  startLine?: number;  // for multi-line ranges
+  commitSha: string;   // the commit scope the comment was written against
+  body: string;
+  createdAt: string;   // ISO timestamp, for ordering
+}
+
+export interface DraftReview {
+  body: string;
+  event: ReviewEvent;
+  comments: DraftComment[];
+}
+
+function emptyDraft(): DraftReview {
+  return { body: "", event: "COMMENT", comments: [] };
+}
+
+function loadDraftReviews(): Record<string, DraftReview> {
+  try {
+    const raw = safeGetItem("diff-draft-reviews");
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return {};
+    }
+    const result: Record<string, DraftReview> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!value || typeof value !== "object") continue;
+      const v = value as Partial<DraftReview>;
+      if (!Array.isArray(v.comments)) continue;
+      const event: ReviewEvent =
+        v.event === "APPROVE" || v.event === "REQUEST_CHANGES" ? v.event : "COMMENT";
+      result[key] = {
+        body: typeof v.body === "string" ? v.body : "",
+        event,
+        comments: v.comments.filter(
+          (c): c is DraftComment =>
+            !!c &&
+            typeof (c as DraftComment).id === "string" &&
+            typeof (c as DraftComment).path === "string" &&
+            typeof (c as DraftComment).line === "number" &&
+            typeof (c as DraftComment).body === "string" &&
+            typeof (c as DraftComment).commitSha === "string",
+        ),
+      };
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function saveDraftReviews(d: Record<string, DraftReview>): void {
+  safeSetItem("diff-draft-reviews", JSON.stringify(d));
+}
+
 function loadReviewedFiles(): Record<string, string[]> {
   try {
     const raw = safeGetItem("diff-reviewed-files");
@@ -154,6 +220,7 @@ export function createDiffStore(opts?: DiffStoreOptions) {
   let currentNumber = $state(0);
   let reviewedCommits = $state<Record<string, string[]>>(loadReviewedCommits());
   let reviewedFiles = $state<Record<string, string[]>>(loadReviewedFiles());
+  let draftReviews = $state<Record<string, DraftReview>>(loadDraftReviews());
 
   function getCurrentPR(): { owner: string; name: string; number: number } | null {
     if (!currentOwner) return null;
@@ -621,6 +688,77 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     return { reviewed: count, total: list.files.length };
   }
 
+  function draftKey(): string {
+    return reviewedKey();
+  }
+
+  function getDraft(): DraftReview {
+    return draftReviews[draftKey()] ?? emptyDraft();
+  }
+
+  function setDraftBody(body: string): void {
+    if (!currentOwner) return;
+    const key = draftKey();
+    const existing = draftReviews[key] ?? emptyDraft();
+    draftReviews = { ...draftReviews, [key]: { ...existing, body } };
+    saveDraftReviews(draftReviews);
+  }
+
+  function setDraftEvent(event: ReviewEvent): void {
+    if (!currentOwner) return;
+    const key = draftKey();
+    const existing = draftReviews[key] ?? emptyDraft();
+    draftReviews = { ...draftReviews, [key]: { ...existing, event } };
+    saveDraftReviews(draftReviews);
+  }
+
+  function addDraftComment(
+    input: Omit<DraftComment, "id" | "createdAt">,
+  ): DraftComment {
+    const comment: DraftComment = {
+      ...input,
+      id:
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      createdAt: new Date().toISOString(),
+    };
+    const key = draftKey();
+    const existing = draftReviews[key] ?? emptyDraft();
+    draftReviews = {
+      ...draftReviews,
+      [key]: { ...existing, comments: [...existing.comments, comment] },
+    };
+    saveDraftReviews(draftReviews);
+    return comment;
+  }
+
+  function removeDraftComment(id: string): void {
+    const key = draftKey();
+    const existing = draftReviews[key];
+    if (!existing) return;
+    const next = existing.comments.filter((c) => c.id !== id);
+    if (next.length === existing.comments.length) return;
+    draftReviews = {
+      ...draftReviews,
+      [key]: { ...existing, comments: next },
+    };
+    saveDraftReviews(draftReviews);
+  }
+
+  function getDraftCommentsForPath(path: string): DraftComment[] {
+    return getDraft().comments.filter((c) => c.path === path);
+  }
+
+  function clearDraft(): void {
+    const key = draftKey();
+    if (!draftReviews[key]) return;
+    const next = { ...draftReviews };
+    delete next[key];
+    draftReviews = next;
+    saveDraftReviews(draftReviews);
+  }
+
   function markCommitReviewed(sha: string): void {
     if (!currentOwner) return;
     const key = reviewedKey();
@@ -803,6 +941,13 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     markFileReviewed,
     isFileReviewed,
     getFileReviewProgress,
+    getDraft,
+    setDraftBody,
+    setDraftEvent,
+    addDraftComment,
+    removeDraftComment,
+    getDraftCommentsForPath,
+    clearDraft,
     loadCommits,
     selectCommit,
     selectRange,
