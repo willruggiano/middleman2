@@ -813,6 +813,16 @@ func (c *liveClient) CreateReview(
 			}
 			if c.StartLine > 0 {
 				d.StartLine = new(c.StartLine)
+				// GitHub requires start_side alongside start_line for
+				// multi-line comments. Default it to the comment's
+				// side so single-side ranges (the common case) resolve
+				// cleanly — GitHub rejects the comment with "Start
+				// position could not be resolved" if this is missing.
+				startSide := c.Side
+				if startSide == "" {
+					startSide = "RIGHT"
+				}
+				d.StartSide = new(startSide)
 			}
 			drafts[i] = d
 		}
