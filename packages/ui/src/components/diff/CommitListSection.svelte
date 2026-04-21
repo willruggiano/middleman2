@@ -3,7 +3,7 @@
   import ScopePill from "./ScopePill.svelte";
   import CommitListItem from "./CommitListItem.svelte";
 
-  const { diff: diffStore, detail: detailStore } = getStores();
+  const { diff: diffStore } = getStores();
 
   let expanded = $state(false);
 
@@ -13,7 +13,6 @@
   const scope = $derived(diffStore.getScope());
   const commitIndex = $derived(diffStore.getCommitIndex());
   const reviewProgress = $derived(diffStore.getReviewProgress());
-  const commentCounts = $derived(detailStore.getCommitCommentCounts());
 
   let bodyEl: HTMLDivElement | undefined = $state();
 
@@ -154,7 +153,6 @@
             {commit}
             active={isActive(commit.sha)}
             reviewed={diffStore.isCommitReviewed(commit.sha)}
-            commentCount={commentCounts.get(commit.sha) ?? 0}
             onclick={handleCommitClick}
           />
         {/each}
