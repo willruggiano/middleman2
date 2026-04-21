@@ -1144,6 +1144,18 @@ func (s *Server) submitReview(ctx context.Context, input *submitReviewInput) (*s
 				"You already have a pending review on this PR. Cancel or submit it on GitHub before trying again: " + prURL,
 			)
 		}
+		// "could not be resolved" means one or more inline comments
+		// anchor to a line that doesn't map to the PR's current head.
+		// Almost always because the reviewer drafted the comment
+		// against an older commit and the file changed since. The
+		// pending card already flags drift with the amber "@ sha"
+		// chip — surface actionable guidance here.
+		if strings.Contains(err.Error(), "could not be resolved") {
+			return nil, huma.Error409Conflict(
+				"GitHub couldn't anchor one or more inline comments. This usually means the comment was drafted against an older commit and the file has changed since. " +
+					"Look for pending comments with an amber commit chip (@ sha) in the diff — those drafts may need to be rewritten against the current code, then try publishing again. Raw error: " + err.Error(),
+			)
+		}
 		return nil, huma.Error502BadGateway("submit review: " + err.Error())
 	}
 
