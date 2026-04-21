@@ -2,6 +2,7 @@
   import type { DiffFile } from "../../api/types.js";
   import { getStores } from "../../context.js";
   import CommitListSection from "./CommitListSection.svelte";
+  import QuestionsSection from "./QuestionsSection.svelte";
 
   // Reusable file-tree + commit-list panel for the diff Files view.
   // Used by PullList (inlined under the selected PR row in the
@@ -80,6 +81,7 @@
 </script>
 
 <CommitListSection />
+<QuestionsSection />
 <div class="diff-files">
   {#if diff.isFileListLoading() && !diff.getFileList()}
     <div class="diff-files-state diff-files-state--loading">Loading files</div>
