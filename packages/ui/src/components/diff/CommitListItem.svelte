@@ -35,6 +35,7 @@
   type="button"
   class="commit-item"
   class:commit-item--active={active}
+  data-commit-sha={commit.sha}
   onclick={handleClick}
   title={commit.message}
 >

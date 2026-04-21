@@ -146,25 +146,25 @@
     {:else if diff}
       <div class="diff-main">
         <DiffToolbar />
-        {#if scope.kind === "commit" && activeCommit && commitIndex}
-          <div class="commit-header">
-            <div class="commit-header__top">
-              <span class="commit-header__position">Commit {commitIndex.current} of {commitIndex.total}</span>
-              <span class="commit-header__sha">{activeCommit.sha.slice(0, 7)}</span>
-              <span class="commit-header__author">{activeCommit.author_name}</span>
-            </div>
-            <div class="commit-header__message">{activeCommit.message}</div>
-            {#if activeCommit.body}
-              <div class="commit-header__body">{activeCommit.body}</div>
-            {/if}
-          </div>
-        {/if}
         <div
           class="diff-area"
           bind:this={diffArea}
           onscroll={onDiffScroll}
           style:tab-size={tabWidth}
         >
+          {#if scope.kind === "commit" && activeCommit && commitIndex}
+            <div class="commit-header">
+              <div class="commit-header__top">
+                <span class="commit-header__position">Commit {commitIndex.current} of {commitIndex.total}</span>
+                <span class="commit-header__sha">{activeCommit.sha.slice(0, 7)}</span>
+                <span class="commit-header__author">{activeCommit.author_name}</span>
+              </div>
+              <div class="commit-header__message">{activeCommit.message}</div>
+              {#if activeCommit.body}
+                <div class="commit-header__body">{activeCommit.body}</div>
+              {/if}
+            </div>
+          {/if}
           {#each diff.files as file (file.path)}
             <DiffFileComponent
               {file}

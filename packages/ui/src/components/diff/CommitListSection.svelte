@@ -14,6 +14,24 @@
   const commitIndex = $derived(diffStore.getCommitIndex());
   const reviewProgress = $derived(diffStore.getReviewProgress());
 
+  let bodyEl: HTMLDivElement | undefined = $state();
+
+  // Scroll the active commit into view whenever the selection changes.
+  // Runs after the {#if expanded} branch mounts, so the first activation
+  // via [ / ] (which auto-expands the section) still finds the element.
+  $effect(() => {
+    const s = scope;
+    if (!expanded || !bodyEl) return;
+    const sha = s.kind === "commit" ? s.sha : s.kind === "range" ? s.toSha : null;
+    if (!sha) return;
+    requestAnimationFrame(() => {
+      const el = bodyEl?.querySelector<HTMLElement>(
+        `[data-commit-sha="${sha}"]`,
+      );
+      if (el) el.scrollIntoView({ block: "nearest" });
+    });
+  });
+
   // Reset expand state when selected PR changes so section doesn't stay open
   // with stale/empty commit list after PR switch.
   $effect(() => {
@@ -104,7 +122,7 @@
   </div>
 
   {#if expanded}
-    <div class="commit-section__body">
+    <div class="commit-section__body" bind:this={bodyEl}>
       {#if commitsLoading}
         <div class="commit-section__state">Loading...</div>
       {:else if commitsError}
