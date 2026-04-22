@@ -1,0 +1,468 @@
+<script lang="ts">
+  import { getStores } from "../../context.js";
+  import { renderMarkdown } from "../../utils/markdown.js";
+  import { timeAgo } from "../../utils/time.js";
+
+  interface Props {
+    owner: string;
+    name: string;
+    number: number;
+  }
+
+  const { owner, name, number }: Props = $props();
+
+  const { brief: briefStore, diff: diffStore } = getStores();
+
+  const brief = $derived(briefStore.current());
+  const commits = $derived(diffStore.getCommits());
+  const headSha = $derived(
+    commits && commits.length > 0 ? commits[0]!.sha : "",
+  );
+
+  let expanded = $state(false);
+  // Collapsed by default until the user opens it; auto-expand when a
+  // new brief finishes so the reviewer can see the result without
+  // clicking twice.
+  let lastSeenStatus = $state<string | null>(null);
+  $effect(() => {
+    const s = brief?.status ?? null;
+    if (s === "done" && lastSeenStatus !== "done") {
+      expanded = true;
+    }
+    lastSeenStatus = s;
+  });
+
+  const stale = $derived(briefStore.isStale(headSha));
+  const inFlight = $derived(briefStore.isInFlight());
+
+  async function generate(depth: "quick" | "deep"): Promise<void> {
+    await briefStore.generate(depth);
+  }
+
+  async function regenerate(): Promise<void> {
+    await briefStore.generate(brief?.depth === "deep" ? "deep" : "quick");
+  }
+
+  async function remove(): Promise<void> {
+    await briefStore.remove();
+  }
+
+  // Parse the Markdown into known sections. The generator prompt
+  // demands exact "## Intent / Before / After / Commits /
+  // Observations" headings; anything outside those gets dropped into
+  // a "Preamble" bucket and rendered under Intent as a fallback.
+  interface Sections {
+    intent: string;
+    before: string;
+    after: string;
+    commits: string;
+    observations: string;
+    other: string;
+  }
+
+  const sections = $derived.by<Sections>(() => {
+    const empty: Sections = {
+      intent: "",
+      before: "",
+      after: "",
+      commits: "",
+      observations: "",
+      other: "",
+    };
+    if (!brief || !brief.content) return empty;
+    return splitSections(brief.content);
+  });
+
+  function splitSections(md: string): Sections {
+    const out: Sections = {
+      intent: "",
+      before: "",
+      after: "",
+      commits: "",
+      observations: "",
+      other: "",
+    };
+    // Match "## Heading" at line start, capture heading + body until next "## " or EOF.
+    const re = /(^|\n)##\s+([^\n]+)\n([\s\S]*?)(?=\n##\s+|$)/g;
+    let m: RegExpExecArray | null;
+    let matched = false;
+    while ((m = re.exec(md)) !== null) {
+      matched = true;
+      const heading = m[2]!.trim().toLowerCase();
+      const body = m[3]!.trim();
+      switch (heading) {
+        case "intent": out.intent = body; break;
+        case "before": out.before = body; break;
+        case "after": out.after = body; break;
+        case "commits": out.commits = body; break;
+        case "observations": out.observations = body; break;
+        default: out.other += (out.other ? "\n\n" : "") + `## ${m[2]!.trim()}\n\n${body}`;
+      }
+    }
+    if (!matched) {
+      // Fall back to dumping everything into Intent when Claude
+      // ignored the structure.
+      out.intent = md.trim();
+    }
+    return out;
+  }
+</script>
+
+<div class="brief" class:brief--stale={stale}>
+  <div class="brief__header">
+    <span class="brief__badge">Claude's brief</span>
+    {#if brief}
+      <span class="brief__meta">
+        <span class="brief__sha" title="Brief anchored to this PR head">
+          @ {brief.head_sha.slice(0, 7)}
+        </span>
+        <span class="brief__depth">{brief.depth}</span>
+        {#if brief.created_at}
+          <span class="brief__time">{timeAgo(brief.created_at)}</span>
+        {/if}
+        {#if inFlight}
+          <span class="brief__status brief__status--running">
+            <span class="brief__status-dot"></span>
+            {brief.status === "queued" ? "queued" : "thinking"}
+          </span>
+        {:else if brief.status === "failed"}
+          <span class="brief__status brief__status--failed">failed</span>
+        {:else if stale}
+          <span class="brief__status brief__status--stale" title="PR head has moved since this brief was generated — regenerate for a fresh take">
+            stale
+          </span>
+        {/if}
+      </span>
+      <div class="brief__actions">
+        <button
+          type="button"
+          class="brief__btn"
+          disabled={inFlight}
+          onclick={() => void regenerate()}
+          title="Regenerate against the current head"
+        >
+          {inFlight ? "..." : "Regenerate"}
+        </button>
+        <button
+          type="button"
+          class="brief__btn brief__btn--subtle"
+          onclick={() => void remove()}
+          title="Delete this brief"
+        >
+          &times;
+        </button>
+        <button
+          type="button"
+          class="brief__btn brief__btn--subtle"
+          onclick={() => (expanded = !expanded)}
+        >
+          {expanded ? "Collapse" : "Expand"}
+        </button>
+      </div>
+    {:else}
+      <div class="brief__actions">
+        <button
+          type="button"
+          class="brief__btn brief__btn--primary"
+          disabled={inFlight || briefStore.isLoading()}
+          onclick={() => void generate("quick")}
+          title="Generate a quick structural brief (diff + commit log only)"
+        >
+          ✨ Generate brief
+        </button>
+        <button
+          type="button"
+          class="brief__btn"
+          disabled={inFlight || briefStore.isLoading()}
+          onclick={() => void generate("deep")}
+          title="Deep mode — Claude explores the repo for context (slower, more thorough)"
+        >
+          Deep
+        </button>
+      </div>
+    {/if}
+  </div>
+
+  {#if briefStore.getError()}
+    <div class="brief__error">{briefStore.getError()}</div>
+  {/if}
+
+  {#if brief && brief.status === "failed" && brief.error}
+    <div class="brief__error">{brief.error}</div>
+  {/if}
+
+  {#if brief && expanded && brief.content}
+    <div class="brief__body">
+      {#if sections.intent}
+        <section class="brief__section">
+          <h4 class="brief__section-title">Intent</h4>
+          <div class="brief__section-body markdown-body">
+            {@html renderMarkdown(sections.intent, { owner, name })}
+          </div>
+        </section>
+      {/if}
+      {#if sections.before || sections.after}
+        <section class="brief__section brief__section--split">
+          {#if sections.before}
+            <div class="brief__half">
+              <h4 class="brief__section-title brief__section-title--before">Before</h4>
+              <div class="brief__section-body markdown-body">
+                {@html renderMarkdown(sections.before, { owner, name })}
+              </div>
+            </div>
+          {/if}
+          {#if sections.after}
+            <div class="brief__half">
+              <h4 class="brief__section-title brief__section-title--after">After</h4>
+              <div class="brief__section-body markdown-body">
+                {@html renderMarkdown(sections.after, { owner, name })}
+              </div>
+            </div>
+          {/if}
+        </section>
+      {/if}
+      {#if sections.commits}
+        <section class="brief__section">
+          <h4 class="brief__section-title">Commits</h4>
+          <div class="brief__section-body markdown-body">
+            {@html renderMarkdown(sections.commits, { owner, name })}
+          </div>
+        </section>
+      {/if}
+      {#if sections.observations}
+        <section class="brief__section">
+          <h4 class="brief__section-title">Observations</h4>
+          <div class="brief__section-body markdown-body">
+            {@html renderMarkdown(sections.observations, { owner, name })}
+          </div>
+        </section>
+      {/if}
+      {#if sections.other}
+        <section class="brief__section">
+          <div class="brief__section-body markdown-body">
+            {@html renderMarkdown(sections.other, { owner, name })}
+          </div>
+        </section>
+      {/if}
+      <div class="brief__footer">
+        Generated by Claude — treat as a reading aid, not a verdict. Cites may be wrong.
+      </div>
+    </div>
+  {/if}
+</div>
+
+<style>
+  .brief {
+    margin: 0;
+    padding: 8px 16px;
+    background: color-mix(in srgb, var(--accent-purple) 4%, var(--bg-surface));
+    border-bottom: 1px solid var(--diff-border);
+  }
+
+  .brief--stale {
+    background: color-mix(in srgb, var(--accent-amber) 4%, var(--bg-surface));
+  }
+
+  .brief__header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .brief__badge {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-purple);
+    color: #fff;
+  }
+
+  .brief__meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-wrap: wrap;
+  }
+
+  .brief__sha {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border-muted);
+    background: var(--bg-inset);
+  }
+
+  .brief__depth {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border-muted);
+    background: var(--bg-inset);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .brief__status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+
+  .brief__status--running {
+    color: var(--accent-amber);
+    background: color-mix(in srgb, var(--accent-amber) 14%, transparent);
+  }
+
+  .brief__status--failed {
+    color: var(--accent-red);
+    background: color-mix(in srgb, var(--accent-red) 14%, transparent);
+  }
+
+  .brief__status--stale {
+    color: var(--accent-amber);
+    background: color-mix(in srgb, var(--accent-amber) 14%, transparent);
+    cursor: help;
+  }
+
+  .brief__status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: brief-pulse 1.2s ease-in-out infinite;
+  }
+
+  @keyframes brief-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  .brief__actions {
+    margin-left: auto;
+    display: inline-flex;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .brief__btn {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-muted);
+    background: var(--bg-inset);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .brief__btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: var(--bg-surface-hover);
+  }
+
+  .brief__btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .brief__btn--primary {
+    border-color: var(--accent-purple);
+    background: var(--accent-purple);
+    color: #fff;
+  }
+
+  .brief__btn--primary:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+
+  .brief__btn--subtle {
+    color: var(--text-muted);
+  }
+
+  .brief__error {
+    margin-top: 6px;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--accent-red) 8%, var(--bg-inset));
+    color: var(--accent-red);
+    font-size: 12px;
+    white-space: pre-wrap;
+  }
+
+  .brief__body {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .brief__section {
+    border: 1px dashed color-mix(in srgb, var(--accent-purple) 40%, transparent);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    background: var(--bg-surface);
+  }
+
+  .brief__section--split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    border: none;
+    padding: 0;
+    background: none;
+  }
+
+  .brief__half {
+    border: 1px dashed color-mix(in srgb, var(--accent-purple) 40%, transparent);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    background: var(--bg-surface);
+  }
+
+  @media (max-width: 720px) {
+    .brief__section--split {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .brief__section-title {
+    margin: 0 0 6px 0;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+
+  .brief__section-title--before {
+    color: var(--accent-amber);
+  }
+
+  .brief__section-title--after {
+    color: var(--accent-green);
+  }
+
+  .brief__section-body {
+    font-size: 13px;
+    color: var(--text-primary);
+    line-height: 1.5;
+  }
+
+  .brief__footer {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: right;
+    font-style: italic;
+  }
+</style>

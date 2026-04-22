@@ -9,6 +9,7 @@
   import DiffView from "../components/diff/DiffView.svelte";
   import DiffSidebar from "../components/diff/DiffSidebar.svelte";
   import ReviewCoverBanner from "../components/detail/ReviewCoverBanner.svelte";
+  import ReviewBriefCard from "../components/detail/ReviewBriefCard.svelte";
   import StackSidebar
     from "../components/detail/StackSidebar.svelte";
 
@@ -116,6 +117,11 @@
                 name={selectedPR.name}
               />
             {/if}
+            <ReviewBriefCard
+              owner={selectedPR.owner}
+              name={selectedPR.name}
+              number={selectedPR.number}
+            />
             <DiffView
               owner={selectedPR.owner}
               name={selectedPR.name}

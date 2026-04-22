@@ -19,6 +19,7 @@
   import DiffSidebar from "../diff/DiffSidebar.svelte";
   import CIStatus from "./CIStatus.svelte";
   import ReviewCoverBanner from "./ReviewCoverBanner.svelte";
+  import ReviewBriefCard from "./ReviewBriefCard.svelte";
 
   const { detail: detailStore, pulls, activity } = getStores();
   const client = getClient();
@@ -363,6 +364,7 @@
           </aside>
           <div class="files-main">
             <ReviewCoverBanner {pr} {owner} {name} />
+            <ReviewBriefCard {owner} {name} {number} />
             <DiffView {owner} {name} {number} />
           </div>
         </div>
