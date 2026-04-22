@@ -14,6 +14,53 @@
   const { comment, currentHeadSha, ondelete }: Props = $props();
   const { diff: diffStore } = getStores();
 
+  let editing = $state(false);
+  // draftBody is only meaningful while editing === true; startEdit()
+  // seeds it from the current comment.body at entry time.
+  let draftBody = $state("");
+  let textareaEl: HTMLTextAreaElement | undefined = $state();
+
+  // When the sidebar asks us to open the editor (requestEditDraft),
+  // enter edit mode and acknowledge the signal so re-opens work.
+  $effect(() => {
+    if (diffStore.getEditRequest() === comment.id) {
+      startEdit();
+      diffStore.ackEditRequest(comment.id);
+    }
+  });
+
+  function startEdit(): void {
+    draftBody = comment.body;
+    editing = true;
+    // Focus + caret-to-end after the textarea mounts.
+    queueMicrotask(() => {
+      if (!textareaEl) return;
+      textareaEl.focus();
+      textareaEl.setSelectionRange(textareaEl.value.length, textareaEl.value.length);
+    });
+  }
+
+  function cancelEdit(): void {
+    editing = false;
+  }
+
+  function saveEdit(): void {
+    diffStore.updateDraftCommentBody(comment.id, draftBody);
+    editing = false;
+  }
+
+  function onKeydown(e: KeyboardEvent): void {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      cancelEdit();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      saveEdit();
+    }
+  }
+
   // Drift now means the draft's anchor commit isn't in the PR at
   // all (force-pushed away, or commit_sha was never captured). The
   // publish path posts each inline comment with its OWN commit_id,
@@ -41,7 +88,7 @@
   });
 </script>
 
-<div class="pending" class:pending--drifted={drifted}>
+<div class="pending" class:pending--drifted={drifted} class:pending--editing={editing}>
   <div class="pending__header">
     <span class="pending__badge">Pending</span>
     <span
@@ -56,13 +103,60 @@
         ? `${comment.startLine}–${comment.line}`
         : comment.line}
     </span>
-    <button type="button" class="pending__delete" onclick={ondelete} title="Delete pending comment">
+    {#if !editing}
+      <button
+        type="button"
+        class="pending__action"
+        onclick={startEdit}
+        title="Edit pending comment"
+        aria-label="Edit pending comment"
+      >
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4">
+          <path d="M8.5 1.5l2 2L4 10H2v-2L8.5 1.5z" stroke-linejoin="round" />
+        </svg>
+      </button>
+    {/if}
+    <button
+      type="button"
+      class="pending__action pending__action--delete"
+      onclick={ondelete}
+      title="Delete pending comment"
+      aria-label="Delete pending comment"
+    >
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
         <path d="M2 2L8 8M8 2L2 8" stroke-linecap="round" />
       </svg>
     </button>
   </div>
-  <div class="pending__body">{comment.body}</div>
+
+  {#if editing}
+    <textarea
+      bind:this={textareaEl}
+      class="pending__textarea"
+      bind:value={draftBody}
+      onkeydown={onKeydown}
+      placeholder="Edit comment…"
+    ></textarea>
+    <div class="pending__edit-actions">
+      <span class="pending__hint">Ctrl-Enter to save · Esc to cancel</span>
+      <button type="button" class="pending__btn" onclick={cancelEdit}>Cancel</button>
+      <button
+        type="button"
+        class="pending__btn pending__btn--primary"
+        onclick={saveEdit}
+        disabled={draftBody.trim() === ""}
+      >
+        Save
+      </button>
+    </div>
+  {:else}
+    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+    <div
+      class="pending__body"
+      ondblclick={startEdit}
+      title="Double-click to edit"
+    >{comment.body}</div>
+  {/if}
 </div>
 
 <style>
@@ -131,8 +225,7 @@
     color: var(--text-muted);
   }
 
-  .pending__delete {
-    margin-left: auto;
+  .pending__action {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -145,9 +238,17 @@
     cursor: pointer;
   }
 
-  .pending__delete:hover {
+  .pending__action:first-of-type {
+    margin-left: auto;
+  }
+
+  .pending__action:hover {
     background: var(--bg-surface-hover);
     color: var(--text-primary);
+  }
+
+  .pending__action--delete:hover {
+    color: var(--accent-red);
   }
 
   .pending__body {
@@ -156,5 +257,68 @@
     white-space: pre-wrap;
     word-break: break-word;
     line-height: 1.5;
+    cursor: text;
+  }
+
+  .pending__textarea {
+    width: 100%;
+    min-height: 72px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.5;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+
+  .pending__textarea:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+  }
+
+  .pending__edit-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+  }
+
+  .pending__hint {
+    margin-right: auto;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .pending__btn {
+    padding: 3px 10px;
+    font-size: 11px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .pending__btn:hover {
+    background: var(--bg-surface-hover);
+  }
+
+  .pending__btn--primary {
+    background: var(--accent-blue);
+    border-color: var(--accent-blue);
+    color: #fff;
+  }
+
+  .pending__btn--primary:hover {
+    background: color-mix(in srgb, var(--accent-blue) 90%, #000);
+  }
+
+  .pending__btn:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 </style>

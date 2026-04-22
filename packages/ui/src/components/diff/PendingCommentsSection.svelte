@@ -68,6 +68,11 @@
     }
   }
 
+  function editDraft(c: DraftComment): void {
+    scrollToDraft(c);
+    diffStore.requestEditDraft(c.id);
+  }
+
   function remove(c: DraftComment): void {
     diffStore.removeDraftComment(c.id);
   }
@@ -120,9 +125,21 @@
             </button>
             <button
               type="button"
-              class="draft-item__delete"
+              class="draft-item__action"
+              title="Edit this draft"
+              onclick={() => editDraft(c)}
+              aria-label="Edit draft"
+            >
+              <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4">
+                <path d="M8.5 1.5l2 2L4 10H2v-2L8.5 1.5z" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="draft-item__action draft-item__action--delete"
               title="Delete this draft"
               onclick={() => remove(c)}
+              aria-label="Delete draft"
             >
               <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
                 <path d="M2 2L8 8M8 2L2 8" stroke-linecap="round" />
@@ -293,7 +310,7 @@
     min-width: 0;
   }
 
-  .draft-item__delete {
+  .draft-item__action {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -307,8 +324,12 @@
     flex-shrink: 0;
   }
 
-  .draft-item__delete:hover {
+  .draft-item__action:hover {
     background: var(--bg-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .draft-item__action--delete:hover {
     color: var(--accent-red);
   }
 </style>

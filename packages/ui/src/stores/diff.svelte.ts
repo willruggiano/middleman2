@@ -945,6 +945,49 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     saveDraftReviews(draftReviews);
   }
 
+  // updateDraftCommentBody edits the body of an existing draft without
+  // re-anchoring it. Empty bodies are treated as a deletion so users
+  // can clear-and-save to discard (matching the composer's behavior).
+  function updateDraftCommentBody(id: string, body: string): void {
+    const trimmed = body.trim();
+    if (trimmed === "") {
+      removeDraftComment(id);
+      return;
+    }
+    const key = draftKey();
+    const existing = draftReviews[key];
+    if (!existing) return;
+    let changed = false;
+    const nextComments = existing.comments.map((c) => {
+      if (c.id !== id || c.body === trimmed) return c;
+      changed = true;
+      return { ...c, body: trimmed };
+    });
+    if (!changed) return;
+    draftReviews = {
+      ...draftReviews,
+      [key]: { ...existing, comments: nextComments },
+    };
+    saveDraftReviews(draftReviews);
+  }
+
+  // Transient signal so the sidebar drafts list can ask the inline
+  // card to open its editor after the scroll-into-view lands. The
+  // card clears this once it has entered edit mode.
+  let editingDraftId = $state<string | null>(null);
+
+  function requestEditDraft(id: string): void {
+    editingDraftId = id;
+  }
+
+  function getEditRequest(): string | null {
+    return editingDraftId;
+  }
+
+  function ackEditRequest(id: string): void {
+    if (editingDraftId === id) editingDraftId = null;
+  }
+
   function getDraftCommentsForPath(path: string): DraftComment[] {
     return getDraft().comments.filter((c) => c.path === path);
   }
@@ -1148,6 +1191,10 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     setDraftEvent,
     addDraftComment,
     removeDraftComment,
+    updateDraftCommentBody,
+    requestEditDraft,
+    getEditRequest,
+    ackEditRequest,
     getDraftCommentsForPath,
     clearDraft,
     loadCommits,
