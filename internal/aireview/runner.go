@@ -341,7 +341,10 @@ func (r *Runner) runQuestion(ctx context.Context, thread db.AIThread, question d
 }
 
 // provisionWorktree creates a detached worktree at commitSHA under
-// r.rootDir/<thread-id>/. Returns the absolute worktree path.
+// r.rootDir/<thread-id>/. Returns the absolute worktree path. If a
+// previous worktree exists at the same path (e.g. SQLite reused the
+// primary key after a regenerate), we tear it down first so
+// `git worktree add` doesn't refuse.
 func (r *Runner) provisionWorktree(ctx context.Context, owner, name, commitSHA string, threadID int64) (string, error) {
 	if r.hostFor == nil {
 		return "", errors.New("host resolver not configured")
@@ -353,12 +356,41 @@ func (r *Runner) provisionWorktree(ctx context.Context, owner, name, commitSHA s
 	cloneDir := r.clones.ClonePath(host, owner, name)
 	worktreePath := filepath.Join(r.rootDir, strconv.FormatInt(threadID, 10))
 
+	r.cleanWorktreePath(ctx, cloneDir, worktreePath)
+
 	out, err := exec.CommandContext(ctx, "git", "-C", cloneDir,
 		"worktree", "add", "--detach", worktreePath, commitSHA).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git worktree add: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return worktreePath, nil
+}
+
+// cleanWorktreePath ensures worktreePath doesn't exist on disk and
+// isn't tracked in the clone's worktree list. Safe to call when
+// nothing exists there. Best-effort: any individual step that fails
+// is logged and we move on.
+func (r *Runner) cleanWorktreePath(ctx context.Context, cloneDir, worktreePath string) {
+	// If the path doesn't exist, nothing to do.
+	if _, err := os.Stat(worktreePath); err != nil {
+		// Still prune dangling metadata in case `.git/worktrees/...`
+		// is orphaned after a previous interrupted removal.
+		_ = exec.CommandContext(ctx, "git", "-C", cloneDir, "worktree", "prune").Run()
+		return
+	}
+	// Preferred: let git remove it cleanly.
+	if out, err := exec.CommandContext(ctx, "git", "-C", cloneDir,
+		"worktree", "remove", "--force", worktreePath).CombinedOutput(); err != nil {
+		slog.Warn("git worktree remove during cleanup failed; falling back to rm -rf",
+			"path", worktreePath, "err", err, "output", strings.TrimSpace(string(out)))
+	}
+	// If git didn't do the job (permissions, half-cleaned state),
+	// nuke the directory from disk.
+	if err := os.RemoveAll(worktreePath); err != nil {
+		slog.Warn("rm -rf worktree failed", "path", worktreePath, "err", err)
+	}
+	// Prune git's internal metadata. Idempotent and fast.
+	_ = exec.CommandContext(ctx, "git", "-C", cloneDir, "worktree", "prune").Run()
 }
 
 // removeWorktree does a best-effort cleanup. Errors are logged but not
@@ -657,21 +689,22 @@ func buildBriefPrompt(in BriefInput) string {
 // briefPromptHeader is the static rules portion of the prompt. Split
 // out so a user's override file can copy/paste this verbatim as a
 // starting point if they want to tweak only the rules.
-const briefPromptHeader = `You are generating a structural review brief for a pull request. Read the repository files with your Read/Glob/Grep tools as needed for context. You MUST produce output in the following Markdown structure exactly, with those section headings verbatim:
+const briefPromptHeader = `You are generating a structural review brief for a pull request for a senior engineer. Read the repository files with your Read/Glob/Grep tools as needed for context. You MUST produce output in the following Markdown structure exactly, with those section headings verbatim:
 
 ## Intent
 1–2 sentences naming what this PR actually does, based on the code (not the PR title).
 
 ## Before
-How the code was organised or how it flowed before this PR. Prose or bullets. For a pure addition write: "Skipped: pure addition."
+How the code worked before the change, with respect to the PR. If the PR changes the control or data flow, summarize the before control flow with a minimal pipeline diagram, potentially referencing code methods or components. If the PR is exclusively code movement or refactoring, use prose to describe the shortcomings before the PR. Otherwise, describe the before state in prose or bullets.
 
 ## After
 How the code is organised or how it flows after this PR.
+How the code works after the change, with respect to the PR. If the PR changes the control or data flow, summarize the after control flow with a minimal pipeline diagram, potentially referencing code methods or components, being sure to encompass behavioral changes. If the PR is exclusively code movement or refactoring, use prose to describe the ergonomics after the PR. Otherwise, describe the after state in prose or bullets.
 
 ## Commits
 For each commit in the PR, in order (oldest first), one bullet:
 - ` + "`<sha>`" + ` **<one-line title>**
-  - 1–3 bullets describing what this commit does, with file:line citations.
+  - 1–2 bullets describing what this commit does, with file:line citations.
   - Suggested read depth: ` + "`read carefully`, `skim`, or `skip if trusted`" + `.
 
 ## Observations
