@@ -56,6 +56,11 @@ type CreateReviewOpts struct {
 // its OWN commit_id rather than inheriting one from a review wrapper.
 // Used by the per-comment submit path so commits drafted against
 // different SHAs across the PR series don't all get anchored to HEAD.
+//
+// When InReplyTo > 0 the comment is posted as a reply to an existing
+// review comment: GitHub threads it under the same parent and
+// inherits the thread's anchor (path/line/side/commit_id still need
+// to be sent but GitHub resolves them against the thread head).
 type InlineCommentOpts struct {
 	CommitID  string
 	Path      string
@@ -64,6 +69,7 @@ type InlineCommentOpts struct {
 	Side      string // "LEFT" or "RIGHT"
 	StartLine int    // 0 = single-line
 	StartSide string // defaults to Side
+	InReplyTo int64  // 0 = top-level comment; otherwise the upstream comment id to reply to
 }
 
 // Client is the interface for interacting with the GitHub API.
@@ -857,6 +863,20 @@ func (c *liveClient) CreateReview(
 func (c *liveClient) CreateInlineComment(
 	ctx context.Context, owner, repo string, number int, opts InlineCommentOpts,
 ) (*gh.PullRequestComment, error) {
+	// Replies go through the dedicated replies endpoint, which only
+	// needs a body — GitHub inherits the anchor from the parent
+	// comment. Using it avoids having to re-derive the right
+	// commit_id / path / line / side for a thread whose parent was
+	// made against an older commit.
+	if opts.InReplyTo > 0 {
+		comment, resp, err := c.gh.PullRequests.CreateCommentInReplyTo(ctx, owner, repo, number, opts.Body, opts.InReplyTo)
+		c.trackRate(resp)
+		if err != nil {
+			return nil, fmt.Errorf("replying to comment %d on %s/%s#%d: %w", opts.InReplyTo, owner, repo, number, err)
+		}
+		return comment, nil
+	}
+
 	req := &gh.PullRequestComment{
 		Body: new(opts.Body),
 		Path: new(opts.Path),

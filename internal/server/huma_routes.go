@@ -139,12 +139,13 @@ type approvePRInput struct {
 }
 
 type submitReviewComment struct {
-	Path      string `json:"path"                doc:"File path the comment applies to"`
-	Line      int    `json:"line"                doc:"1-based line in the file (at the commit)"`
-	Side      string `json:"side,omitempty"      doc:"LEFT or RIGHT; RIGHT when omitted"`
+	Path      string `json:"path,omitempty"       doc:"File path the comment applies to (required unless in_reply_to is set)"`
+	Line      int    `json:"line,omitempty"       doc:"1-based line in the file (required unless in_reply_to is set)"`
+	Side      string `json:"side,omitempty"       doc:"LEFT or RIGHT; RIGHT when omitted"`
 	StartLine int    `json:"start_line,omitempty" doc:"For multi-line comments; omit for single-line"`
-	Body      string `json:"body"                doc:"Comment body (markdown)"`
-	CommitID  string `json:"commit_id,omitempty" doc:"Commit SHA this comment is anchored to; falls back to the review-level commit_id when empty"`
+	Body      string `json:"body"                 doc:"Comment body (markdown)"`
+	CommitID  string `json:"commit_id,omitempty"  doc:"Commit SHA this comment is anchored to; falls back to the review-level commit_id when empty"`
+	InReplyTo int64  `json:"in_reply_to,omitempty" doc:"Upstream comment id this reply threads under; when set, path/line/side/commit_id are inherited from the parent"`
 }
 
 type submitReviewInput struct {
@@ -1119,14 +1120,21 @@ func (s *Server) submitReview(ctx context.Context, input *submitReviewInput) (*s
 	// fail fast and don't leave a half-published review.
 	preps := make([]preparedComment, 0, len(input.Body.Comments))
 	for i, c := range input.Body.Comments {
+		if strings.TrimSpace(c.Body) == "" {
+			return nil, huma.Error400BadRequest(fmt.Sprintf("comment[%d]: body is required", i))
+		}
+		// Replies only need a body — GitHub pulls path/line/side/
+		// commit_id from the parent thread. Allow callers to omit
+		// those fields for a cleaner frontend payload.
+		if c.InReplyTo > 0 {
+			preps = append(preps, preparedComment{in: c, index: i})
+			continue
+		}
 		if c.Path == "" {
 			return nil, huma.Error400BadRequest(fmt.Sprintf("comment[%d]: path is required", i))
 		}
 		if c.Line <= 0 {
 			return nil, huma.Error400BadRequest(fmt.Sprintf("comment[%d]: line must be positive", i))
-		}
-		if strings.TrimSpace(c.Body) == "" {
-			return nil, huma.Error400BadRequest(fmt.Sprintf("comment[%d]: body is required", i))
 		}
 		side := c.Side
 		if side == "" {
@@ -1159,6 +1167,7 @@ func (s *Server) submitReview(ctx context.Context, input *submitReviewInput) (*s
 			Side:      p.side,
 			StartLine: p.in.StartLine,
 			StartSide: p.side,
+			InReplyTo: p.in.InReplyTo,
 		})
 		if err != nil {
 			return nil, translateCreateError(err, input, &p, len(postedIDs))

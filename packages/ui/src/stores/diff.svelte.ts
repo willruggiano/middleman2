@@ -114,6 +114,11 @@ export interface DraftComment {
   commitSha: string;   // the commit scope the comment was written against
   body: string;
   createdAt: string;   // ISO timestamp, for ordering
+  // When set, this draft is a reply to an upstream (already-published)
+  // review comment. At submit time the path/line/side/commit_sha are
+  // ignored in favor of the parent thread's anchor — we still keep
+  // them here so the draft renders in the right spot in the diff UI.
+  inReplyTo?: number;
 }
 
 export interface DraftReview {

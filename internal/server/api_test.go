@@ -933,6 +933,7 @@ func TestAPISubmitReview_WithInlineComments(t *testing.T) {
 	commitID := "abc1234"
 	side := "RIGHT"
 	line := int64(42)
+	path := "src/x.go"
 	commentBody := "Consider renaming this"
 
 	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewWithResponse(
@@ -942,8 +943,8 @@ func TestAPISubmitReview_WithInlineComments(t *testing.T) {
 			Body:     &body,
 			CommitId: &commitID,
 			Comments: &[]generated.SubmitReviewComment{{
-				Path: "src/x.go",
-				Line: line,
+				Path: &path,
+				Line: &line,
 				Side: &side,
 				Body: commentBody,
 			}},
@@ -971,6 +972,57 @@ func TestAPISubmitReview_WithInlineComments(t *testing.T) {
 	assert.Empty(opts.Comments)
 }
 
+func TestAPISubmitReview_ReplyToUpstreamComment(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	mock := &mockGH{}
+	srv, _ := setupTestServerWithMock(t, mock)
+	client := setupTestClient(t, srv)
+
+	// Reply drafts omit path/line/side/commit_id; the server routes
+	// them through the replies endpoint and GitHub inherits the
+	// anchor from the parent comment.
+	parentID := int64(987654)
+	replyBody := "Thanks for the catch — fixing now."
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody{
+			Event: "COMMENT",
+			Comments: &[]generated.SubmitReviewComment{
+				{Body: replyBody, InReplyTo: &parentID},
+			},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.Len(mock.lastInlineComments, 1)
+	ic := mock.lastInlineComments[0]
+	assert.Equal(parentID, ic.InReplyTo)
+	assert.Equal(replyBody, ic.Body)
+	// Anchor fields stay empty — the replies endpoint doesn't need them.
+	assert.Empty(ic.Path)
+	assert.Empty(ic.CommitID)
+	assert.Equal(0, ic.Line)
+}
+
+func TestAPISubmitReview_ReplyRejectsMissingBody(t *testing.T) {
+	mock := &mockGH{}
+	srv, _ := setupTestServerWithMock(t, mock)
+	client := setupTestClient(t, srv)
+	parentID := int64(1)
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewWithResponse(
+		context.Background(), "acme", "widget", 1,
+		generated.PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody{
+			Event: "COMMENT",
+			Comments: &[]generated.SubmitReviewComment{
+				{Body: "", InReplyTo: &parentID},
+			},
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode())
+}
+
 func TestAPISubmitReview_PerCommentCommitID(t *testing.T) {
 	require := require.New(t)
 	assert := Assert.New(t)
@@ -982,6 +1034,10 @@ func TestAPISubmitReview_PerCommentCommitID(t *testing.T) {
 	side := "RIGHT"
 	b1 := "old-commit comment"
 	b2 := "head comment"
+	pathA := "a.go"
+	pathB := "b.go"
+	line10 := int64(10)
+	line20 := int64(20)
 
 	// Two comments: one anchored to an older commit, one to HEAD.
 	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewWithResponse(
@@ -990,8 +1046,8 @@ func TestAPISubmitReview_PerCommentCommitID(t *testing.T) {
 			Event:    "COMMENT",
 			CommitId: &headSha,
 			Comments: &[]generated.SubmitReviewComment{
-				{Path: "a.go", Line: 10, Side: &side, Body: b1, CommitId: &olderSha},
-				{Path: "b.go", Line: 20, Side: &side, Body: b2, CommitId: &headSha},
+				{Path: &pathA, Line: &line10, Side: &side, Body: b1, CommitId: &olderSha},
+				{Path: &pathB, Line: &line20, Side: &side, Body: b2, CommitId: &headSha},
 			},
 		},
 	)
@@ -1015,6 +1071,8 @@ func TestAPISubmitReview_PerCommentFallsBackToReviewLevelCommitID(t *testing.T) 
 	headSha := "head1234"
 	side := "RIGHT"
 	b := "q"
+	path := "a.go"
+	line := int64(1)
 
 	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewWithResponse(
 		context.Background(), "acme", "widget", 1,
@@ -1022,7 +1080,7 @@ func TestAPISubmitReview_PerCommentFallsBackToReviewLevelCommitID(t *testing.T) 
 			Event:    "COMMENT",
 			CommitId: &headSha,
 			Comments: &[]generated.SubmitReviewComment{
-				{Path: "a.go", Line: 1, Side: &side, Body: b},
+				{Path: &path, Line: &line, Side: &side, Body: b},
 			},
 		},
 	)
@@ -1039,13 +1097,15 @@ func TestAPISubmitReview_RejectsMissingCommitID(t *testing.T) {
 	client := setupTestClient(t, srv)
 	side := "RIGHT"
 	b := "q"
+	path := "a.go"
+	line := int64(1)
 
 	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewWithResponse(
 		context.Background(), "acme", "widget", 1,
 		generated.PostReposByOwnerByNamePullsByNumberReviewJSONRequestBody{
 			Event: "COMMENT",
 			Comments: &[]generated.SubmitReviewComment{
-				{Path: "a.go", Line: 1, Side: &side, Body: b},
+				{Path: &path, Line: &line, Side: &side, Body: b},
 			},
 		},
 	)
@@ -1073,6 +1133,8 @@ func TestAPISubmitReview_DefaultsSideToRight(t *testing.T) {
 	client := setupTestClient(t, srv)
 	b := "pls"
 	sha := "abc1234"
+	path := "a.go"
+	line := int64(1)
 
 	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewWithResponse(
 		context.Background(), "acme", "widget", 1,
@@ -1080,8 +1142,8 @@ func TestAPISubmitReview_DefaultsSideToRight(t *testing.T) {
 			Event:    "COMMENT",
 			CommitId: &sha,
 			Comments: &[]generated.SubmitReviewComment{{
-				Path: "a.go",
-				Line: 1,
+				Path: &path,
+				Line: &line,
 				Body: b,
 			}},
 		},

@@ -67,14 +67,22 @@
     const commits = diffStore.getCommits();
     const headSha = commits && commits.length > 0 ? commits[0]!.sha : "";
 
-    const commentsBody = draft.comments.map((c) => ({
-      path: c.path,
-      line: c.line,
-      side: c.side,
-      ...(c.startLine != null ? { start_line: c.startLine } : {}),
-      body: c.body,
-      ...(c.commitSha ? { commit_id: c.commitSha } : {}),
-    }));
+    const commentsBody = draft.comments.map((c) => {
+      // Replies inherit path/line/side/commit_id from the parent
+      // thread — send only the body and in_reply_to so the backend
+      // can route through GitHub's replies endpoint.
+      if (c.inReplyTo != null && c.inReplyTo > 0) {
+        return { body: c.body, in_reply_to: c.inReplyTo };
+      }
+      return {
+        path: c.path,
+        line: c.line,
+        side: c.side,
+        ...(c.startLine != null ? { start_line: c.startLine } : {}),
+        body: c.body,
+        ...(c.commitSha ? { commit_id: c.commitSha } : {}),
+      };
+    });
 
     try {
       const { data, error } = await client.POST(

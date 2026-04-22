@@ -88,16 +88,22 @@
   });
 </script>
 
-<div class="pending" class:pending--drifted={drifted} class:pending--editing={editing}>
+<div class="pending" class:pending--drifted={drifted} class:pending--editing={editing} class:pending--reply={!!comment.inReplyTo}>
   <div class="pending__header">
-    <span class="pending__badge">Pending</span>
-    <span
-      class="pending__commit"
-      class:pending__commit--drifted={drifted}
-      title={chipTitle}
-    >
-      @ {comment.commitSha ? comment.commitSha.slice(0, 7) : "???"}
-    </span>
+    {#if comment.inReplyTo}
+      <span class="pending__badge pending__badge--reply" title="Draft reply to an existing comment — will thread under the parent on publish">Pending reply</span>
+    {:else}
+      <span class="pending__badge">Pending</span>
+    {/if}
+    {#if !comment.inReplyTo}
+      <span
+        class="pending__commit"
+        class:pending__commit--drifted={drifted}
+        title={chipTitle}
+      >
+        @ {comment.commitSha ? comment.commitSha.slice(0, 7) : "???"}
+      </span>
+    {/if}
     <span class="pending__anchor">
       {comment.side === "LEFT" ? "−" : "+"}{comment.startLine != null && comment.startLine !== comment.line
         ? `${comment.startLine}–${comment.line}`
@@ -200,6 +206,14 @@
   .pending--drifted .pending__badge {
     background: var(--accent-amber);
     color: #000;
+  }
+
+  .pending__badge--reply {
+    background: color-mix(in srgb, var(--accent-blue) 55%, var(--bg-inset));
+  }
+
+  .pending--reply {
+    margin-left: 96px;
   }
 
   .pending__commit {

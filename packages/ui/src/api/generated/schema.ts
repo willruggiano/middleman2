@@ -1531,11 +1531,16 @@ export interface components {
             commit_id?: string;
             /**
              * Format: int64
-             * @description 1-based line in the file (at the commit)
+             * @description Upstream comment id this reply threads under; when set, path/line/side/commit_id are inherited from the parent
              */
-            line: number;
-            /** @description File path the comment applies to */
-            path: string;
+            in_reply_to?: number;
+            /**
+             * Format: int64
+             * @description 1-based line in the file (required unless in_reply_to is set)
+             */
+            line?: number;
+            /** @description File path the comment applies to (required unless in_reply_to is set) */
+            path?: string;
             /** @description LEFT or RIGHT; RIGHT when omitted */
             side?: string;
             /**

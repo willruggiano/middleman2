@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getStores } from "../../context.js";
   import { renderMarkdown } from "../../utils/markdown.js";
   import { timeAgo } from "../../utils/time.js";
   import type { PublishedReviewComment } from "../../stores/detail.svelte.js";
@@ -15,6 +16,11 @@
   }
 
   const { comment, repoOwner, repoName, currentHeadSha }: Props = $props();
+  const { diff: diffStore } = getStores();
+
+  let replying = $state(false);
+  let replyBody = $state("");
+  let replyEl: HTMLTextAreaElement | undefined = $state();
 
   const outdated = $derived(
     currentHeadSha !== "" && comment.commitId !== "" && comment.commitId !== currentHeadSha,
@@ -27,6 +33,51 @@
     }
     return `${sign}${comment.line}`;
   });
+
+  function startReply(): void {
+    replying = true;
+    replyBody = "";
+    queueMicrotask(() => replyEl?.focus());
+  }
+
+  function cancelReply(): void {
+    replying = false;
+    replyBody = "";
+  }
+
+  function saveReply(): void {
+    const body = replyBody.trim();
+    if (body === "") return;
+    // Anchor fields mirror the parent so the draft lands at the
+    // same line-wrap visually. GitHub will re-resolve the anchor
+    // server-side via the replies endpoint, so these are just for
+    // the local render.
+    const commits = diffStore.getCommits();
+    const headSha = commits && commits.length > 0 ? commits[0]!.sha : comment.commitId;
+    diffStore.addDraftComment({
+      path: comment.path,
+      line: comment.line,
+      side: comment.side,
+      ...(comment.startLine != null ? { startLine: comment.startLine } : {}),
+      commitSha: headSha,
+      body,
+      inReplyTo: comment.id,
+    });
+    replying = false;
+    replyBody = "";
+  }
+
+  function onReplyKeydown(e: KeyboardEvent): void {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      cancelReply();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      saveReply();
+    }
+  }
 </script>
 
 <div class="rc" class:rc--outdated={outdated} class:rc--reply={!!comment.inReplyTo}>
@@ -47,6 +98,20 @@
       <span class="rc__outdated-pill" title="This comment was made against an older commit">outdated</span>
     {/if}
     <span class="rc__time">{timeAgo(comment.createdAt)}</span>
+    {#if !replying}
+      <button
+        type="button"
+        class="rc__action"
+        onclick={startReply}
+        title="Draft a reply"
+        aria-label="Draft a reply"
+      >
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M8 3L3 8l5 5" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M3 8h7a3 3 0 0 1 3 3v2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+    {/if}
     {#if comment.htmlUrl}
       <a class="rc__link" href={comment.htmlUrl} target="_blank" rel="noopener noreferrer" title="Open on GitHub">
         <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -60,6 +125,31 @@
   <div class="rc__body markdown-body">
     {@html renderMarkdown(comment.body, { owner: repoOwner, name: repoName })}
   </div>
+
+  {#if replying}
+    <div class="rc__reply-composer">
+      <textarea
+        bind:this={replyEl}
+        class="rc__reply-input"
+        bind:value={replyBody}
+        onkeydown={onReplyKeydown}
+        placeholder="Reply to {comment.author}…"
+        rows="3"
+      ></textarea>
+      <div class="rc__reply-actions">
+        <span class="rc__reply-hint">Reply stays as a draft until you publish your review · Ctrl-Enter to save · Esc to cancel</span>
+        <button type="button" class="rc__btn" onclick={cancelReply}>Cancel</button>
+        <button
+          type="button"
+          class="rc__btn rc__btn--primary"
+          onclick={saveReply}
+          disabled={replyBody.trim() === ""}
+        >
+          Save draft
+        </button>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -145,6 +235,24 @@
     margin-left: auto;
   }
 
+  .rc__action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .rc__action:hover {
+    background: var(--bg-surface-hover);
+    color: var(--accent-blue);
+  }
+
   .rc__link {
     display: inline-flex;
     align-items: center;
@@ -164,5 +272,73 @@
     font-size: 13px;
     color: var(--text-primary);
     line-height: 1.5;
+  }
+
+  .rc__reply-composer {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border-muted);
+  }
+
+  .rc__reply-input {
+    width: 100%;
+    min-height: 64px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-inset);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.5;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+
+  .rc__reply-input:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+  }
+
+  .rc__reply-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+  }
+
+  .rc__reply-hint {
+    margin-right: auto;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .rc__btn {
+    padding: 3px 10px;
+    font-size: 11px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .rc__btn:hover {
+    background: var(--bg-surface-hover);
+  }
+
+  .rc__btn--primary {
+    background: var(--accent-blue);
+    border-color: var(--accent-blue);
+    color: #fff;
+  }
+
+  .rc__btn--primary:hover {
+    background: color-mix(in srgb, var(--accent-blue) 90%, #000);
+  }
+
+  .rc__btn:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 </style>

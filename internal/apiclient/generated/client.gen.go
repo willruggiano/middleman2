@@ -722,11 +722,14 @@ type SubmitReviewComment struct {
 	// CommitId Commit SHA this comment is anchored to; falls back to the review-level commit_id when empty
 	CommitId *string `json:"commit_id,omitempty"`
 
-	// Line 1-based line in the file (at the commit)
-	Line int64 `json:"line"`
+	// InReplyTo Upstream comment id this reply threads under; when set, path/line/side/commit_id are inherited from the parent
+	InReplyTo *int64 `json:"in_reply_to,omitempty"`
 
-	// Path File path the comment applies to
-	Path string `json:"path"`
+	// Line 1-based line in the file (required unless in_reply_to is set)
+	Line *int64 `json:"line,omitempty"`
+
+	// Path File path the comment applies to (required unless in_reply_to is set)
+	Path *string `json:"path,omitempty"`
 
 	// Side LEFT or RIGHT; RIGHT when omitted
 	Side *string `json:"side,omitempty"`

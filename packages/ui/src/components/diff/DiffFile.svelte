@@ -775,14 +775,6 @@
                   />
                 {/if}
                 {#if leftKey}
-                  {@const pending = pendingByAnchor.get(leftKey) ?? []}
-                  {#each pending as p (p.id)}
-                    <PendingCommentCard
-                      comment={p}
-                      currentHeadSha={currentCommitSha()}
-                      ondelete={() => diffStore.removeDraftComment(p.id)}
-                    />
-                  {/each}
                   {@const published = reviewCommentsByAnchor.get(leftKey) ?? []}
                   {#each published as rc (rc.id)}
                     <ReviewCommentCard
@@ -792,14 +784,7 @@
                       currentHeadSha={currentCommitSha()}
                     />
                   {/each}
-                  {#if leftAnchor}
-                    {#each getAIThreadsAtAnchor(leftAnchor.line, leftAnchor.side) as thread (thread.id)}
-                      <AIThreadCard {thread} repoOwner={owner} repoName={name} />
-                    {/each}
-                  {/if}
-                {/if}
-                {#if rightKey}
-                  {@const pending = pendingByAnchor.get(rightKey) ?? []}
+                  {@const pending = pendingByAnchor.get(leftKey) ?? []}
                   {#each pending as p (p.id)}
                     <PendingCommentCard
                       comment={p}
@@ -807,6 +792,13 @@
                       ondelete={() => diffStore.removeDraftComment(p.id)}
                     />
                   {/each}
+                  {#if leftAnchor}
+                    {#each getAIThreadsAtAnchor(leftAnchor.line, leftAnchor.side) as thread (thread.id)}
+                      <AIThreadCard {thread} repoOwner={owner} repoName={name} />
+                    {/each}
+                  {/if}
+                {/if}
+                {#if rightKey}
                   {@const published = reviewCommentsByAnchor.get(rightKey) ?? []}
                   {#each published as rc (rc.id)}
                     <ReviewCommentCard
@@ -814,6 +806,14 @@
                       repoOwner={owner}
                       repoName={name}
                       currentHeadSha={currentCommitSha()}
+                    />
+                  {/each}
+                  {@const pending = pendingByAnchor.get(rightKey) ?? []}
+                  {#each pending as p (p.id)}
+                    <PendingCommentCard
+                      comment={p}
+                      currentHeadSha={currentCommitSha()}
+                      ondelete={() => diffStore.removeDraftComment(p.id)}
                     />
                   {/each}
                   {#if rightAnchor}
@@ -896,14 +896,6 @@
                   />
                 {/if}
                 {#if anchorKey}
-                  {@const pending = pendingByAnchor.get(anchorKey) ?? []}
-                  {#each pending as p (p.id)}
-                    <PendingCommentCard
-                      comment={p}
-                      currentHeadSha={currentCommitSha()}
-                      ondelete={() => diffStore.removeDraftComment(p.id)}
-                    />
-                  {/each}
                   {@const published = reviewCommentsByAnchor.get(anchorKey) ?? []}
                   {#each published as rc (rc.id)}
                     <ReviewCommentCard
@@ -911,6 +903,14 @@
                       repoOwner={owner}
                       repoName={name}
                       currentHeadSha={currentCommitSha()}
+                    />
+                  {/each}
+                  {@const pending = pendingByAnchor.get(anchorKey) ?? []}
+                  {#each pending as p (p.id)}
+                    <PendingCommentCard
+                      comment={p}
+                      currentHeadSha={currentCommitSha()}
+                      ondelete={() => diffStore.removeDraftComment(p.id)}
                     />
                   {/each}
                   {#if anchor}
