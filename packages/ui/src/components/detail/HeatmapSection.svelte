@@ -17,10 +17,13 @@
     }
   }
 
-  // Aggregate cells per file so the rows can be ordered by churn.
+  // Aggregate cells per file so rows can be ordered by churn and we
+  // can render a totals column alongside the per-commit breakdown.
   interface FileRow {
     path: string;
     total: number;
+    totalAdds: number;
+    totalDels: number;
     byCommit: Map<string, HeatmapCell>;
   }
 
@@ -30,10 +33,15 @@
     for (const c of heatmap.cells) {
       let row = byPath.get(c.path);
       if (!row) {
-        row = { path: c.path, total: 0, byCommit: new Map() };
+        row = {
+          path: c.path, total: 0, totalAdds: 0, totalDels: 0,
+          byCommit: new Map(),
+        };
         byPath.set(c.path, row);
       }
       row.total += c.additions + c.deletions;
+      row.totalAdds += c.additions;
+      row.totalDels += c.deletions;
       row.byCommit.set(c.commit_sha, c);
     }
     const arr = Array.from(byPath.values());
@@ -44,8 +52,10 @@
     return arr;
   });
 
-  // Global max intensity for color scale — a single commit's contribution
-  // to one file.
+  // Global max intensity (log-scaled) drives a subtle cell tint — a
+  // secondary cue so heavy files still "pop" before the reviewer
+  // reads the numbers. Using sum(+/-) keeps the scale consistent
+  // whether a commit is mostly adds or mostly deletes.
   const maxIntensity = $derived.by<number>(() => {
     if (!heatmap) return 0;
     let max = 0;
@@ -58,14 +68,11 @@
 
   function cellStyle(cell: HeatmapCell | undefined): string {
     if (!cell) return "";
-    if (cell.binary) {
-      return "background: var(--accent-purple); opacity: 0.7;";
-    }
+    if (cell.binary) return "";
     const intensity = cell.additions + cell.deletions;
     if (intensity === 0 || maxIntensity === 0) return "";
-    // Log-scale to keep small touches visible next to a huge commit.
     const t = Math.log(1 + intensity) / Math.log(1 + maxIntensity);
-    const opacity = Math.max(0.12, Math.min(1, t));
+    const opacity = Math.max(0.05, Math.min(0.35, 0.35 * t));
     return `background: color-mix(in srgb, var(--accent-blue) ${Math.round(opacity * 100)}%, transparent);`;
   }
 
@@ -126,9 +133,9 @@
       {:else if heatmap}
         <div
           class="heatmap__grid"
-          style="grid-template-columns: minmax(140px, 2fr) repeat({heatmap.commits.length}, minmax(14px, 1fr));"
+          style="grid-template-columns: minmax(180px, 2fr) repeat({heatmap.commits.length}, minmax(56px, max-content)) minmax(72px, max-content);"
         >
-          <!-- Header row: path column placeholder + commit titles -->
+          <!-- Header row: path column placeholder + commit SHAs + totals -->
           <div class="heatmap__corner" title="Files × commits (click a cell to scope the diff to that commit)">files ↓ / commits →</div>
           {#each heatmap.commits as c (c.sha)}
             <button
@@ -139,6 +146,7 @@
               <span class="heatmap__commit-sha">{shortSha(c.sha)}</span>
             </button>
           {/each}
+          <div class="heatmap__total-header" title="Total additions / deletions across the PR range">total</div>
 
           <!-- Data rows -->
           {#each rows as row (row.path)}
@@ -153,8 +161,24 @@
                 onclick={() => onCellClick(c.sha)}
                 title={cellTitle(c, row.path, cell)}
                 aria-label={cellTitle(c, row.path, cell)}
-              ></button>
+              >
+                {#if cell?.binary}
+                  <span class="heatmap__cell-binary">bin</span>
+                {:else if cell}
+                  <span class="heatmap__add">+{cell.additions}</span>
+                  <span class="heatmap__del">&minus;{cell.deletions}</span>
+                {:else}
+                  <span class="heatmap__cell-dash">·</span>
+                {/if}
+              </button>
             {/each}
+            <div
+              class="heatmap__totals"
+              title="Sum across commits: +{row.totalAdds} / -{row.totalDels}"
+            >
+              <span class="heatmap__add">+{row.totalAdds}</span>
+              <span class="heatmap__del">&minus;{row.totalDels}</span>
+            </div>
           {/each}
         </div>
       {/if}
@@ -298,14 +322,21 @@
   }
 
   .heatmap__cell {
-    height: 14px;
-    min-width: 10px;
-    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-height: 18px;
+    padding: 1px 6px;
     border: 1px solid var(--border-muted);
-    border-radius: 2px;
+    border-radius: 3px;
     background: var(--diff-bg);
+    color: var(--text-secondary);
+    font-size: 10px;
+    line-height: 1;
     cursor: pointer;
     transition: outline 0.1s;
+    white-space: nowrap;
   }
 
   .heatmap__cell:hover {
@@ -317,10 +348,50 @@
   .heatmap__cell--empty {
     background: var(--bg-inset);
     border-color: var(--border-muted);
+    color: var(--text-muted);
     cursor: default;
   }
 
   .heatmap__cell--empty:hover {
     outline: none;
+  }
+
+  .heatmap__cell-dash {
+    color: var(--text-muted);
+    opacity: 0.5;
+  }
+
+  .heatmap__cell-binary {
+    color: var(--accent-purple);
+    font-weight: 600;
+  }
+
+  .heatmap__add {
+    color: var(--diff-add-text, var(--accent-green));
+  }
+
+  .heatmap__del {
+    color: var(--diff-del-text, var(--accent-red));
+  }
+
+  .heatmap__total-header {
+    align-self: end;
+    padding: 2px 6px;
+    font-size: 10px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-muted);
+    text-align: center;
+  }
+
+  .heatmap__totals {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 1px 8px;
+    font-size: 10px;
+    color: var(--text-secondary);
+    font-weight: 600;
+    white-space: nowrap;
   }
 </style>
