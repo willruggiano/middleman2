@@ -110,29 +110,45 @@
 
 <div class="brief" class:brief--stale={stale}>
   <div class="brief__header">
-    <span class="brief__badge">Claude's brief</span>
     {#if brief}
-      <span class="brief__meta">
-        <span class="brief__sha" title="Brief anchored to this PR head">
-          @ {brief.head_sha.slice(0, 7)}
+      <button
+        type="button"
+        class="brief__toggle"
+        onclick={() => (expanded = !expanded)}
+        title={expanded ? "Collapse brief" : "Expand brief"}
+        aria-expanded={expanded}
+      >
+        <svg
+          class="brief__chevron"
+          class:brief__chevron--open={expanded}
+          width="10" height="10" viewBox="0 0 10 10" fill="none"
+          stroke="currentColor" stroke-width="1.6"
+        >
+          <polyline points="3,2 7,5 3,8" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span class="brief__badge">Claude's brief</span>
+        <span class="brief__meta">
+          <span class="brief__sha" title="Brief anchored to this PR head">
+            @ {brief.head_sha.slice(0, 7)}
+          </span>
+          <span class="brief__depth">{brief.depth}</span>
+          {#if brief.created_at}
+            <span class="brief__time">{timeAgo(brief.created_at)}</span>
+          {/if}
+          {#if inFlight}
+            <span class="brief__status brief__status--running">
+              <span class="brief__status-dot"></span>
+              {brief.status === "queued" ? "queued" : "thinking"}
+            </span>
+          {:else if brief.status === "failed"}
+            <span class="brief__status brief__status--failed">failed</span>
+          {:else if stale}
+            <span class="brief__status brief__status--stale" title="PR head has moved since this brief was generated — regenerate for a fresh take">
+              stale
+            </span>
+          {/if}
         </span>
-        <span class="brief__depth">{brief.depth}</span>
-        {#if brief.created_at}
-          <span class="brief__time">{timeAgo(brief.created_at)}</span>
-        {/if}
-        {#if inFlight}
-          <span class="brief__status brief__status--running">
-            <span class="brief__status-dot"></span>
-            {brief.status === "queued" ? "queued" : "thinking"}
-          </span>
-        {:else if brief.status === "failed"}
-          <span class="brief__status brief__status--failed">failed</span>
-        {:else if stale}
-          <span class="brief__status brief__status--stale" title="PR head has moved since this brief was generated — regenerate for a fresh take">
-            stale
-          </span>
-        {/if}
-      </span>
+      </button>
       <div class="brief__actions">
         <button
           type="button"
@@ -151,15 +167,9 @@
         >
           &times;
         </button>
-        <button
-          type="button"
-          class="brief__btn brief__btn--subtle"
-          onclick={() => (expanded = !expanded)}
-        >
-          {expanded ? "Collapse" : "Expand"}
-        </button>
       </div>
     {:else}
+      <span class="brief__badge">Claude's brief</span>
       <div class="brief__actions">
         <button
           type="button"
@@ -268,6 +278,38 @@
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+  }
+
+  /* The toggle grows to fill the row so clicking anywhere on the
+     header (except the explicit action buttons) expands/collapses.
+     Reset all button chrome so it reads as a flat clickable row. */
+  .brief__toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    padding: 2px 4px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    text-align: left;
+    color: inherit;
+    border-radius: var(--radius-sm);
+  }
+
+  .brief__toggle:hover {
+    background: var(--bg-surface-hover);
+  }
+
+  .brief__chevron {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    transition: transform 0.15s;
+  }
+
+  .brief__chevron--open {
+    transform: rotate(90deg);
   }
 
   .brief__badge {
