@@ -5,7 +5,7 @@ let highlighterPromise: Promise<Highlighter> | null = null;
 const LANGS = [
   "go", "typescript", "javascript", "tsx", "jsx", "python", "rust", "json",
   "yaml", "markdown", "sql", "shellscript", "css", "html", "toml",
-  "dockerfile", "makefile", "svelte",
+  "dockerfile", "makefile", "svelte", "cpp", "c", "proto",
 ];
 
 function getHighlighter(): Promise<Highlighter> {
@@ -24,11 +24,25 @@ const EXT_TO_LANG: Record<string, string> = {
   yaml: "yaml", yml: "yaml", md: "markdown", sql: "sql",
   sh: "shellscript", bash: "shellscript", css: "css", html: "html",
   toml: "toml", mk: "makefile", svelte: "svelte",
+  // C / C++: Shiki's "cpp" grammar also tokenises C-family headers
+  // (.h) correctly, so route all of them there.
+  c: "cpp", h: "cpp", cc: "cpp", cpp: "cpp", cxx: "cpp",
+  hh: "cpp", hpp: "cpp", hxx: "cpp", inl: "cpp",
+  // Starlark / Bazel uses Python syntax.
+  bzl: "python", star: "python",
+  // Protobuf
+  proto: "proto",
 };
 
 const BASENAME_TO_LANG: Record<string, string> = {
   Dockerfile: "dockerfile",
   Makefile: "makefile",
+  // Bazel build files — no extension; always Starlark (Python-flavoured).
+  BUILD: "python",
+  "BUILD.bazel": "python",
+  WORKSPACE: "python",
+  "WORKSPACE.bazel": "python",
+  "MODULE.bazel": "python",
 };
 
 export function langFromPath(path: string): string | undefined {
