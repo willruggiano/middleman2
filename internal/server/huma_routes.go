@@ -372,6 +372,16 @@ func (s *Server) registerAPI(api huma.API) {
 		DefaultStatus: http.StatusOK,
 	}, s.unsetStarred)
 
+	huma.Get(api, "/author-groups", s.listAuthorGroups)
+	huma.Post(api, "/author-groups", s.createAuthorGroup)
+	huma.Put(api, "/author-groups/{id}", s.updateAuthorGroup)
+	huma.Register(api, huma.Operation{
+		OperationID:   "delete-author-group",
+		Method:        http.MethodDelete,
+		Path:          "/author-groups/{id}",
+		DefaultStatus: http.StatusNoContent,
+	}, s.deleteAuthorGroup)
+
 	huma.Get(api, "/repos", s.listRepos)
 	huma.Get(api, "/repos/{owner}/{name}", s.getRepo)
 	huma.Get(api, "/repos/{owner}/{name}/comment-autocomplete", s.getCommentAutocomplete)

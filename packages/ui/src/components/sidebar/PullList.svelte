@@ -4,7 +4,7 @@
   import DiffSidebar from "../diff/DiffSidebar.svelte";
   import PullItem from "./PullItem.svelte";
 
-  const { pulls, sync, grouping, collapsedRepos, settings } = getStores();
+  const { pulls, sync, grouping, collapsedRepos, settings, authorGroups } = getStores();
   const navigate = getNavigate();
   const actions = getActions();
   const hostState = getHostState();
@@ -116,8 +116,83 @@
   let authorPopoverOpen = $state(false);
   const authorFilterActive = $derived(pulls.getFilterAuthors().length > 0);
 
+  const groupList = $derived(authorGroups.list());
+  const activeGroupId = $derived(authorGroups.getActiveId());
+
+  // --- Author group save-as form state ---
+  let showSaveForm = $state(false);
+  let saveName = $state("");
+  let savingGroup = $state(false);
+  let groupError = $state<string | null>(null);
+
   function toggleAuthorPopover(): void {
     authorPopoverOpen = !authorPopoverOpen;
+    if (!authorPopoverOpen) resetSaveForm();
+  }
+
+  function resetSaveForm(): void {
+    showSaveForm = false;
+    saveName = "";
+    groupError = null;
+  }
+
+  function applyGroup(id: number): void {
+    const g = groupList.find((x) => x.id === id);
+    if (!g) return;
+    pulls.setFilterAuthors([...g.members]);
+    authorGroups.setActive(id);
+    void pulls.loadPulls();
+    authorPopoverOpen = false;
+  }
+
+  function clearActiveGroup(): void {
+    pulls.setFilterAuthors([]);
+    authorGroups.setActive(null);
+    authorPopoverOpen = false;
+  }
+
+  async function saveCurrentAsGroup(): Promise<void> {
+    const members = pulls.getFilterAuthors();
+    if (members.length === 0) {
+      groupError = "Pick some authors first";
+      return;
+    }
+    const name = saveName.trim();
+    if (name === "") {
+      groupError = "Group name is required";
+      return;
+    }
+    savingGroup = true;
+    groupError = null;
+    try {
+      // If a group with this name already exists, update it —
+      // lets the user refresh a group's membership without
+      // having to delete + recreate.
+      const existing = groupList.find(
+        (g) => g.name.toLowerCase() === name.toLowerCase(),
+      );
+      const g = existing
+        ? await authorGroups.update(existing.id, name, members)
+        : await authorGroups.create(name, members);
+      if (!g) {
+        groupError = authorGroups.getError() ?? "Failed to save group";
+        return;
+      }
+      authorGroups.setActive(g.id);
+      resetSaveForm();
+    } finally {
+      savingGroup = false;
+    }
+  }
+
+  async function deleteGroup(id: number): Promise<void> {
+    const g = groupList.find((x) => x.id === id);
+    if (!g) return;
+    if (!confirm(`Delete the "${g.name}" group?`)) return;
+    await authorGroups.remove(id);
+    if (activeGroupId === id) {
+      pulls.setFilterAuthors([]);
+    }
   }
 
   function handleAuthorPopoverMousedown(e: MouseEvent): void {
@@ -125,6 +200,7 @@
     const target = e.target as HTMLElement;
     if (!target.closest(".author-filter-wrap")) {
       authorPopoverOpen = false;
+      resetSaveForm();
     }
   }
 
@@ -224,12 +300,51 @@
       </button>
       {#if authorPopoverOpen}
         <div class="author-popover">
+          {#if groupList.length > 0}
+            <div class="author-popover__section-head">Groups</div>
+            {#each groupList as g (g.id)}
+              {@const active = activeGroupId === g.id}
+              <div
+                class="author-popover__group"
+                class:author-popover__group--active={active}
+              >
+                <button
+                  class="author-popover__group-apply"
+                  onclick={() => applyGroup(g.id)}
+                  title={`Filter to ${g.members.length} ${g.members.length === 1 ? "author" : "authors"}: ${g.members.join(", ")}`}
+                >
+                  <span class="author-popover__check">{active ? "✓" : ""}</span>
+                  <span class="author-popover__name">{g.name}</span>
+                  <span class="author-popover__group-count">{g.members.length}</span>
+                </button>
+                <button
+                  class="author-popover__group-del"
+                  title="Delete group"
+                  onclick={() => void deleteGroup(g.id)}
+                  aria-label={`Delete ${g.name} group`}
+                >
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <path d="M2 2L8 8M8 2L2 8" stroke-linecap="round" />
+                  </svg>
+                </button>
+              </div>
+            {/each}
+            <div class="author-popover__divider"></div>
+          {/if}
+
+          <div class="author-popover__section-head">Authors</div>
           {#each pulls.getAvailableAuthors() as author (author)}
             {@const checked = pulls.getFilterAuthors().includes(author)}
             <button
               class="author-popover__item"
               class:author-popover__item--active={checked}
-              onclick={() => pulls.toggleFilterAuthor(author)}
+              onclick={() => {
+                pulls.toggleFilterAuthor(author);
+                // Editing membership manually breaks the active
+                // group identity; clear it so we don't mislabel
+                // a custom filter as a saved group.
+                if (activeGroupId !== null) authorGroups.setActive(null);
+              }}
             >
               <span class="author-popover__check">{checked ? "\u2713" : ""}</span>
               <span class="author-popover__name">{author}</span>
@@ -237,11 +352,50 @@
           {:else}
             <div class="author-popover__empty">No authors</div>
           {/each}
+          <div class="author-popover__divider"></div>
+
           {#if authorFilterActive}
+            {#if showSaveForm}
+              <div class="author-popover__save-form">
+                <input
+                  class="author-popover__save-input"
+                  placeholder="Group name"
+                  bind:value={saveName}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void saveCurrentAsGroup();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      resetSaveForm();
+                    }
+                  }}
+                />
+                <button
+                  class="author-popover__save-btn"
+                  onclick={() => void saveCurrentAsGroup()}
+                  disabled={savingGroup || saveName.trim() === ""}
+                >Save</button>
+                <button
+                  class="author-popover__cancel-btn"
+                  onclick={resetSaveForm}
+                >Cancel</button>
+              </div>
+              {#if groupError}
+                <div class="author-popover__error">{groupError}</div>
+              {/if}
+            {:else}
+              <button
+                class="author-popover__save-as"
+                onclick={() => { showSaveForm = true; groupError = null; }}
+              >Save selection as group</button>
+            {/if}
             <button
               class="author-popover__reset"
-              onclick={() => { pulls.setFilterAuthors([]); authorPopoverOpen = false; }}
+              onclick={clearActiveGroup}
             >Clear filter</button>
+          {:else if groupList.length === 0}
+            <div class="author-popover__hint">Pick authors, then save as a group</div>
           {/if}
         </div>
       {/if}
@@ -590,6 +744,153 @@
   .author-popover__reset:hover {
     color: var(--accent-blue);
     background: var(--bg-surface-hover);
+  }
+
+  .author-popover__section-head {
+    padding: 6px 10px 2px;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+  }
+
+  .author-popover__divider {
+    height: 1px;
+    background: var(--border-muted);
+    margin: 4px 0;
+  }
+
+  .author-popover__group {
+    display: flex;
+    align-items: stretch;
+  }
+
+  .author-popover__group--active .author-popover__name {
+    color: var(--accent-blue);
+    font-weight: 600;
+  }
+
+  .author-popover__group-apply {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 6px 5px 10px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text-primary);
+    flex: 1;
+    min-width: 0;
+    font-size: 11px;
+  }
+
+  .author-popover__group-apply:hover {
+    background: var(--bg-surface-hover);
+  }
+
+  .author-popover__group-count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--bg-inset);
+    margin-left: auto;
+  }
+
+  .author-popover__group-del {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .author-popover__group-del:hover {
+    color: var(--accent-red);
+    background: var(--bg-surface-hover);
+  }
+
+  .author-popover__hint {
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  .author-popover__save-form {
+    display: flex;
+    gap: 4px;
+    padding: 6px 8px;
+  }
+
+  .author-popover__save-input {
+    flex: 1;
+    min-width: 0;
+    padding: 3px 6px;
+    font-size: 11px;
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+  }
+
+  .author-popover__save-input:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+  }
+
+  .author-popover__save-btn,
+  .author-popover__cancel-btn {
+    padding: 3px 8px;
+    font-size: 11px;
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .author-popover__save-btn {
+    background: var(--accent-blue);
+    border-color: var(--accent-blue);
+    color: #fff;
+  }
+
+  .author-popover__save-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .author-popover__cancel-btn:hover {
+    background: var(--bg-surface-hover);
+  }
+
+  .author-popover__save-as {
+    display: block;
+    width: 100%;
+    padding: 5px 10px;
+    font-size: 11px;
+    color: var(--accent-blue);
+    cursor: pointer;
+    border: none;
+    background: none;
+    text-align: left;
+  }
+
+  .author-popover__save-as:hover {
+    background: var(--bg-surface-hover);
+  }
+
+  .author-popover__error {
+    padding: 4px 10px 6px;
+    font-size: 11px;
+    color: var(--accent-red);
   }
 
   .count-badge {

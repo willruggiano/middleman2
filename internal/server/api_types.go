@@ -135,6 +135,21 @@ type commitsResponse struct {
 	Commits []commitResponse `json:"commits" doc:"Commits in newest-first order"`
 }
 
+// authorGroupResponse is the wire shape for an author group; it
+// flattens db.AuthorGroup's Members slice + timestamps into the
+// JSON form the dashboard consumes.
+type authorGroupResponse struct {
+	ID        int64    `json:"id"`
+	Name      string   `json:"name"`
+	Members   []string `json:"members"`
+	CreatedAt string   `json:"created_at"`
+	UpdatedAt string   `json:"updated_at"`
+}
+
+type authorGroupsResponse struct {
+	Groups []authorGroupResponse `json:"groups"`
+}
+
 // blobRangeResponse serves a slice of the file blob at a given
 // sha so the diff viewer can expand context around hunks. Lines
 // are returned as-is (no trailing newline); callers re-insert

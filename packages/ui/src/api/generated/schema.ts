@@ -21,6 +21,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/author-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get author groups */
+        get: operations["get-author-groups"];
+        put?: never;
+        /** Post author groups */
+        post: operations["post-author-groups"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/author-groups/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put author groups by ID */
+        put: operations["put-author-groups-by-id"];
+        post?: never;
+        delete: operations["delete-author-group"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/issues": {
         parameters: {
             query?: never;
@@ -837,6 +872,29 @@ export interface components {
             readonly $schema?: string;
             body: string;
         };
+        AuthorGroupResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AuthorGroupResponse.json
+             */
+            readonly $schema?: string;
+            created_at: string;
+            /** Format: int64 */
+            id: number;
+            members: string[] | null;
+            name: string;
+            updated_at: string;
+        };
+        AuthorGroupsResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AuthorGroupsResponse.json
+             */
+            readonly $schema?: string;
+            groups: components["schemas"]["AuthorGroupResponse"][] | null;
+        };
         BlobRangeResponse: {
             /**
              * Format: uri
@@ -924,6 +982,18 @@ export interface components {
             question: string;
             /** @description Text the reviewer selected */
             selection_text?: string;
+        };
+        CreateAuthorGroupInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CreateAuthorGroupInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description GitHub logins that belong to this group */
+            members: string[] | null;
+            /** @description Display name; must be unique */
+            name: string;
         };
         CreateBriefInputBody: {
             /**
@@ -1616,6 +1686,16 @@ export interface components {
             progress?: string;
             running: boolean;
         };
+        UpdateAuthorGroupInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/UpdateAuthorGroupInputBody.json
+             */
+            readonly $schema?: string;
+            members: string[] | null;
+            name: string;
+        };
         WorkflowApprovalResponse: {
             checked: boolean;
             /** Format: int64 */
@@ -1692,6 +1772,132 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ActivityResponse"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-author-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthorGroupsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-author-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAuthorGroupInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthorGroupResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-author-groups-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAuthorGroupInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthorGroupResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-author-group": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

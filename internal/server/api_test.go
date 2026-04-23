@@ -5218,6 +5218,92 @@ func TestAPIBlobRange_NotFoundPR(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resp.StatusCode())
 }
 
+func TestAPIAuthorGroupsCRUD(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	srv, _ := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+
+	// Empty state.
+	listResp, err := client.HTTP.GetAuthorGroupsWithResponse(ctx)
+	require.NoError(err)
+	require.Equal(http.StatusOK, listResp.StatusCode())
+	require.NotNil(listResp.JSON200)
+	require.NotNil(listResp.JSON200.Groups)
+	assert.Empty(*listResp.JSON200.Groups)
+
+	// Create.
+	createMembers := []string{"alice", "bob", "Alice"}
+	createResp, err := client.HTTP.PostAuthorGroupsWithResponse(ctx,
+		generated.PostAuthorGroupsJSONRequestBody{
+			Name:    "team-a",
+			Members: &createMembers,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	require.NotNil(createResp.JSON200)
+	assert.Equal("team-a", createResp.JSON200.Name)
+	// Members deduped case-insensitively, original casing kept.
+	require.NotNil(createResp.JSON200.Members)
+	assert.Equal([]string{"alice", "bob"}, *createResp.JSON200.Members)
+	id := createResp.JSON200.Id
+
+	// Duplicate name → 409.
+	dupMembers := []string{"carol"}
+	dupResp, err := client.HTTP.PostAuthorGroupsWithResponse(ctx,
+		generated.PostAuthorGroupsJSONRequestBody{
+			Name:    "team-a",
+			Members: &dupMembers,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusConflict, dupResp.StatusCode())
+
+	// Update rename + membership.
+	updMembers := []string{"bob", "dave"}
+	updResp, err := client.HTTP.PutAuthorGroupsByIdWithResponse(ctx, id,
+		generated.PutAuthorGroupsByIdJSONRequestBody{
+			Name:    "team-alpha",
+			Members: &updMembers,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, updResp.StatusCode())
+	require.NotNil(updResp.JSON200)
+	assert.Equal("team-alpha", updResp.JSON200.Name)
+	require.NotNil(updResp.JSON200.Members)
+	assert.Equal([]string{"bob", "dave"}, *updResp.JSON200.Members)
+
+	// Delete.
+	delResp, err := client.HTTP.DeleteAuthorGroupWithResponse(ctx, id)
+	require.NoError(err)
+	assert.Equal(http.StatusNoContent, delResp.StatusCode())
+
+	// Back to empty.
+	listResp, err = client.HTTP.GetAuthorGroupsWithResponse(ctx)
+	require.NoError(err)
+	require.Equal(http.StatusOK, listResp.StatusCode())
+	require.NotNil(listResp.JSON200.Groups)
+	assert.Empty(*listResp.JSON200.Groups)
+}
+
+func TestAPIAuthorGroupsUpdateMissing(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	members := []string{"nobody"}
+	resp, err := client.HTTP.PutAuthorGroupsByIdWithResponse(context.Background(), 99999,
+		generated.PutAuthorGroupsByIdJSONRequestBody{
+			Name:    "ghost",
+			Members: &members,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode())
+}
+
 func TestAPIPRNotes_CRUD(t *testing.T) {
 	require := require.New(t)
 	assert := Assert.New(t)

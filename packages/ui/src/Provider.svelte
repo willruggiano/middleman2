@@ -75,6 +75,9 @@
   import {
     createBriefStore,
   } from "./stores/brief.svelte.js";
+  import {
+    createAuthorGroupsStore,
+  } from "./stores/authorGroups.svelte.js";
 
   interface Props {
     client: MiddlemanClient;
@@ -217,6 +220,9 @@
       ...(cfg.basePath != null && { getBasePath: () => cfg.basePath as string }),
     });
 
+    const authorGroupsStore = createAuthorGroupsStore({ client: cl });
+    void authorGroupsStore.load();
+
     const si: StoreInstances = {
       pulls: pullsStore,
       issues: issuesStore,
@@ -230,6 +236,7 @@
       events: eventsStore,
       ai: aiStore,
       brief: briefStore,
+      authorGroups: authorGroupsStore,
     };
 
     if (roborevBase) {

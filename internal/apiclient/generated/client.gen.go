@@ -138,6 +138,24 @@ type ApprovePRInputBody struct {
 	Body   string  `json:"body"`
 }
 
+// AuthorGroupResponse defines model for AuthorGroupResponse.
+type AuthorGroupResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema    *string   `json:"$schema,omitempty"`
+	CreatedAt string    `json:"created_at"`
+	Id        int64     `json:"id"`
+	Members   *[]string `json:"members"`
+	Name      string    `json:"name"`
+	UpdatedAt string    `json:"updated_at"`
+}
+
+// AuthorGroupsResponse defines model for AuthorGroupsResponse.
+type AuthorGroupsResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string                `json:"$schema,omitempty"`
+	Groups *[]AuthorGroupResponse `json:"groups"`
+}
+
 // BlobRangeResponse defines model for BlobRangeResponse.
 type BlobRangeResponse struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -222,6 +240,18 @@ type CreateAIThreadInputBody struct {
 
 	// SelectionText Text the reviewer selected
 	SelectionText *string `json:"selection_text,omitempty"`
+}
+
+// CreateAuthorGroupInputBody defines model for CreateAuthorGroupInputBody.
+type CreateAuthorGroupInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// Members GitHub logins that belong to this group
+	Members *[]string `json:"members"`
+
+	// Name Display name; must be unique
+	Name string `json:"name"`
 }
 
 // CreateBriefInputBody defines model for CreateBriefInputBody.
@@ -782,6 +812,14 @@ type SyncStatus struct {
 	Running     bool       `json:"running"`
 }
 
+// UpdateAuthorGroupInputBody defines model for UpdateAuthorGroupInputBody.
+type UpdateAuthorGroupInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string   `json:"$schema,omitempty"`
+	Members *[]string `json:"members"`
+	Name    string    `json:"name"`
+}
+
 // WorkflowApprovalResponse defines model for WorkflowApprovalResponse.
 type WorkflowApprovalResponse struct {
 	Checked  bool  `json:"checked"`
@@ -907,6 +945,12 @@ type DeleteWorkspaceParams struct {
 	Force *bool `form:"force,omitempty" json:"force,omitempty"`
 }
 
+// PostAuthorGroupsJSONRequestBody defines body for PostAuthorGroups for application/json ContentType.
+type PostAuthorGroupsJSONRequestBody = CreateAuthorGroupInputBody
+
+// PutAuthorGroupsByIdJSONRequestBody defines body for PutAuthorGroupsById for application/json ContentType.
+type PutAuthorGroupsByIdJSONRequestBody = UpdateAuthorGroupInputBody
+
 // PostIssueCommentJSONRequestBody defines body for PostIssueComment for application/json ContentType.
 type PostIssueCommentJSONRequestBody = PostIssueCommentInputBody
 
@@ -1030,6 +1074,22 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 type ClientInterface interface {
 	// GetActivity request
 	GetActivity(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAuthorGroups request
+	GetAuthorGroups(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostAuthorGroupsWithBody request with any body
+	PostAuthorGroupsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PostAuthorGroups(ctx context.Context, body PostAuthorGroupsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteAuthorGroup request
+	DeleteAuthorGroup(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutAuthorGroupsByIdWithBody request with any body
+	PutAuthorGroupsByIdWithBody(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutAuthorGroupsById(ctx context.Context, id int64, body PutAuthorGroupsByIdJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListIssues request
 	ListIssues(ctx context.Context, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1210,6 +1270,78 @@ type ClientInterface interface {
 
 func (c *Client) GetActivity(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetActivityRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetAuthorGroups(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAuthorGroupsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostAuthorGroupsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostAuthorGroupsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostAuthorGroups(ctx context.Context, body PostAuthorGroupsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostAuthorGroupsRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteAuthorGroup(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteAuthorGroupRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutAuthorGroupsByIdWithBody(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutAuthorGroupsByIdRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutAuthorGroupsById(ctx context.Context, id int64, body PutAuthorGroupsByIdJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutAuthorGroupsByIdRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2097,6 +2229,154 @@ func NewGetActivityRequest(server string, params *GetActivityParams) (*http.Requ
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewGetAuthorGroupsRequest generates requests for GetAuthorGroups
+func NewGetAuthorGroupsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/author-groups")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPostAuthorGroupsRequest calls the generic PostAuthorGroups builder with application/json body
+func NewPostAuthorGroupsRequest(server string, body PostAuthorGroupsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostAuthorGroupsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPostAuthorGroupsRequestWithBody generates requests for PostAuthorGroups with any type of body
+func NewPostAuthorGroupsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/author-groups")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteAuthorGroupRequest generates requests for DeleteAuthorGroup
+func NewDeleteAuthorGroupRequest(server string, id int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/author-groups/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPutAuthorGroupsByIdRequest calls the generic PutAuthorGroupsById builder with application/json body
+func NewPutAuthorGroupsByIdRequest(server string, id int64, body PutAuthorGroupsByIdJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutAuthorGroupsByIdRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewPutAuthorGroupsByIdRequestWithBody generates requests for PutAuthorGroupsById with any type of body
+func NewPutAuthorGroupsByIdRequestWithBody(server string, id int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/author-groups/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -4901,6 +5181,22 @@ type ClientWithResponsesInterface interface {
 	// GetActivityWithResponse request
 	GetActivityWithResponse(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*GetActivityResponse, error)
 
+	// GetAuthorGroupsWithResponse request
+	GetAuthorGroupsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAuthorGroupsResponse, error)
+
+	// PostAuthorGroupsWithBodyWithResponse request with any body
+	PostAuthorGroupsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostAuthorGroupsResponse, error)
+
+	PostAuthorGroupsWithResponse(ctx context.Context, body PostAuthorGroupsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostAuthorGroupsResponse, error)
+
+	// DeleteAuthorGroupWithResponse request
+	DeleteAuthorGroupWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*DeleteAuthorGroupResponse, error)
+
+	// PutAuthorGroupsByIdWithBodyWithResponse request with any body
+	PutAuthorGroupsByIdWithBodyWithResponse(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutAuthorGroupsByIdResponse, error)
+
+	PutAuthorGroupsByIdWithResponse(ctx context.Context, id int64, body PutAuthorGroupsByIdJSONRequestBody, reqEditors ...RequestEditorFn) (*PutAuthorGroupsByIdResponse, error)
+
 	// ListIssuesWithResponse request
 	ListIssuesWithResponse(ctx context.Context, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*ListIssuesResponse, error)
 
@@ -5095,6 +5391,97 @@ func (r GetActivityResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetActivityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetAuthorGroupsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *AuthorGroupsResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAuthorGroupsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAuthorGroupsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PostAuthorGroupsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *AuthorGroupResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PostAuthorGroupsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostAuthorGroupsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteAuthorGroupResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteAuthorGroupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteAuthorGroupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PutAuthorGroupsByIdResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *AuthorGroupResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PutAuthorGroupsByIdResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutAuthorGroupsByIdResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -6206,6 +6593,58 @@ func (c *ClientWithResponses) GetActivityWithResponse(ctx context.Context, param
 	return ParseGetActivityResponse(rsp)
 }
 
+// GetAuthorGroupsWithResponse request returning *GetAuthorGroupsResponse
+func (c *ClientWithResponses) GetAuthorGroupsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAuthorGroupsResponse, error) {
+	rsp, err := c.GetAuthorGroups(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAuthorGroupsResponse(rsp)
+}
+
+// PostAuthorGroupsWithBodyWithResponse request with arbitrary body returning *PostAuthorGroupsResponse
+func (c *ClientWithResponses) PostAuthorGroupsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostAuthorGroupsResponse, error) {
+	rsp, err := c.PostAuthorGroupsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostAuthorGroupsResponse(rsp)
+}
+
+func (c *ClientWithResponses) PostAuthorGroupsWithResponse(ctx context.Context, body PostAuthorGroupsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostAuthorGroupsResponse, error) {
+	rsp, err := c.PostAuthorGroups(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostAuthorGroupsResponse(rsp)
+}
+
+// DeleteAuthorGroupWithResponse request returning *DeleteAuthorGroupResponse
+func (c *ClientWithResponses) DeleteAuthorGroupWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*DeleteAuthorGroupResponse, error) {
+	rsp, err := c.DeleteAuthorGroup(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteAuthorGroupResponse(rsp)
+}
+
+// PutAuthorGroupsByIdWithBodyWithResponse request with arbitrary body returning *PutAuthorGroupsByIdResponse
+func (c *ClientWithResponses) PutAuthorGroupsByIdWithBodyWithResponse(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutAuthorGroupsByIdResponse, error) {
+	rsp, err := c.PutAuthorGroupsByIdWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutAuthorGroupsByIdResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutAuthorGroupsByIdWithResponse(ctx context.Context, id int64, body PutAuthorGroupsByIdJSONRequestBody, reqEditors ...RequestEditorFn) (*PutAuthorGroupsByIdResponse, error) {
+	rsp, err := c.PutAuthorGroupsById(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutAuthorGroupsByIdResponse(rsp)
+}
+
 // ListIssuesWithResponse request returning *ListIssuesResponse
 func (c *ClientWithResponses) ListIssuesWithResponse(ctx context.Context, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*ListIssuesResponse, error) {
 	rsp, err := c.ListIssues(ctx, params, reqEditors...)
@@ -6782,6 +7221,131 @@ func ParseGetActivityResponse(rsp *http.Response) (*GetActivityResponse, error) 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ActivityResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAuthorGroupsResponse parses an HTTP response from a GetAuthorGroupsWithResponse call
+func ParseGetAuthorGroupsResponse(rsp *http.Response) (*GetAuthorGroupsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAuthorGroupsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AuthorGroupsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostAuthorGroupsResponse parses an HTTP response from a PostAuthorGroupsWithResponse call
+func ParsePostAuthorGroupsResponse(rsp *http.Response) (*PostAuthorGroupsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostAuthorGroupsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AuthorGroupResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteAuthorGroupResponse parses an HTTP response from a DeleteAuthorGroupWithResponse call
+func ParseDeleteAuthorGroupResponse(rsp *http.Response) (*DeleteAuthorGroupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteAuthorGroupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutAuthorGroupsByIdResponse parses an HTTP response from a PutAuthorGroupsByIdWithResponse call
+func ParsePutAuthorGroupsByIdResponse(rsp *http.Response) (*PutAuthorGroupsByIdResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutAuthorGroupsByIdResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AuthorGroupResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
