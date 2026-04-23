@@ -1038,6 +1038,60 @@ func TestGetPreviouslyOpenPRNumbers(t *testing.T) {
 	Assert.Equal(t, []int{2}, closed)
 }
 
+func TestResolveReviewCommentRootID(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	repoID := insertTestRepo(t, d, "o", "r")
+	mrID := insertTestMR(t, d, repoID, 1, "pr1", baseTime())
+
+	// Thread: root(100) <- reply(101) <- reply(102)
+	id100 := int64(100)
+	id101 := int64(101)
+	id102 := int64(102)
+	require.NoError(d.UpsertMREvents(ctx, []MREvent{
+		{
+			MergeRequestID: mrID, PlatformID: &id100,
+			EventType: "review_comment", Author: "alice", Body: "root",
+			MetadataJSON: `{}`, DedupeKey: "rc-100",
+			CreatedAt:    baseTime(),
+		},
+		{
+			MergeRequestID: mrID, PlatformID: &id101,
+			EventType: "review_comment", Author: "bob", Body: "reply1",
+			MetadataJSON: `{"in_reply_to":100}`, DedupeKey: "rc-101",
+			CreatedAt:    baseTime().Add(time.Minute),
+		},
+		{
+			MergeRequestID: mrID, PlatformID: &id102,
+			EventType: "review_comment", Author: "alice", Body: "reply2",
+			MetadataJSON: `{"in_reply_to":101}`, DedupeKey: "rc-102",
+			CreatedAt:    baseTime().Add(2 * time.Minute),
+		},
+	}))
+
+	// Resolving from any link in the chain returns the root.
+	root, err := d.ResolveReviewCommentRootID(ctx, mrID, 102)
+	require.NoError(err)
+	assert.Equal(int64(100), root)
+
+	root, err = d.ResolveReviewCommentRootID(ctx, mrID, 101)
+	require.NoError(err)
+	assert.Equal(int64(100), root)
+
+	// The root itself resolves to itself.
+	root, err = d.ResolveReviewCommentRootID(ctx, mrID, 100)
+	require.NoError(err)
+	assert.Equal(int64(100), root)
+
+	// An unknown comment id falls through unchanged.
+	root, err = d.ResolveReviewCommentRootID(ctx, mrID, 999)
+	require.NoError(err)
+	assert.Equal(int64(999), root)
+}
+
 func TestUpsertPullRequestMergeableState(t *testing.T) {
 	assert := Assert.New(t)
 	require := require.New(t)

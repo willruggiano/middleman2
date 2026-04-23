@@ -948,6 +948,53 @@ func (d *DB) UpsertMREvents(ctx context.Context, events []MREvent) error {
 	})
 }
 
+// ResolveReviewCommentRootID walks the in_reply_to chain starting from
+// the given review-comment platform ID and returns the root of that
+// thread (the top-most parent we have a record of). Returns the input
+// unchanged when:
+//   - we have no record of the comment, OR
+//   - the comment is already a thread root (in_reply_to unset or 0).
+//
+// Used by the submit-review path: GitHub's dedicated
+// /pulls/{n}/comments/{id}/replies endpoint 404s unless `id` is a
+// thread root, so we have to resolve it before posting.
+func (d *DB) ResolveReviewCommentRootID(
+	ctx context.Context, mrID, commentID int64,
+) (int64, error) {
+	current := commentID
+	// Bounded walk — GitHub threads are rarely more than a handful
+	// deep. Cap at 32 to prevent a malformed cycle from spinning.
+	for i := 0; i < 32; i++ {
+		var metaJSON string
+		err := d.ro.QueryRowContext(ctx,
+			`SELECT COALESCE(metadata_json, '{}')
+			   FROM middleman_mr_events
+			  WHERE merge_request_id = ? AND event_type = 'review_comment'
+			        AND platform_id = ?
+			  LIMIT 1`,
+			mrID, current,
+		).Scan(&metaJSON)
+		if errors.Is(err, sql.ErrNoRows) {
+			return current, nil
+		}
+		if err != nil {
+			return 0, fmt.Errorf("lookup review comment %d: %w", current, err)
+		}
+		var meta struct {
+			InReplyTo int64 `json:"in_reply_to"`
+		}
+		if err := json.Unmarshal([]byte(metaJSON), &meta); err != nil {
+			// Metadata corrupt: treat the current id as the root.
+			return current, nil
+		}
+		if meta.InReplyTo == 0 || meta.InReplyTo == current {
+			return current, nil
+		}
+		current = meta.InReplyTo
+	}
+	return current, nil
+}
+
 // ListMREvents returns all events for a merge request ordered by created_at DESC.
 func (d *DB) ListMREvents(ctx context.Context, mrID int64) ([]MREvent, error) {
 	rows, err := d.ro.QueryContext(ctx, `

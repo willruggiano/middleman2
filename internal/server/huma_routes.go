@@ -1170,8 +1170,35 @@ func (s *Server) submitReview(ctx context.Context, input *submitReviewInput) (*s
 	// failure on any single comment aborts — partial publishes are
 	// confusing, and the client can retry after the reviewer deletes
 	// the bad draft.
+	// Resolve reply targets to their thread roots. GitHub's dedicated
+	// /pulls/{n}/comments/{id}/replies endpoint 404s unless {id} is
+	// itself a root comment, so replying to a mid-thread reply fails
+	// if we pass the target id through unchanged.
+	var mrIDForReplyResolve int64
+	hasReply := false
+	for _, p := range preps {
+		if p.in.InReplyTo > 0 {
+			hasReply = true
+			break
+		}
+	}
+	if hasReply {
+		id, err := s.lookupMRID(ctx, repoNumberPathRef{
+			owner: input.Owner, name: input.Name, number: input.Number,
+		})
+		if err == nil {
+			mrIDForReplyResolve = id
+		}
+	}
+
 	postedIDs := make([]int64, 0, len(preps))
 	for _, p := range preps {
+		inReplyTo := p.in.InReplyTo
+		if inReplyTo > 0 && mrIDForReplyResolve != 0 {
+			if root, rerr := s.db.ResolveReviewCommentRootID(ctx, mrIDForReplyResolve, inReplyTo); rerr == nil && root > 0 {
+				inReplyTo = root
+			}
+		}
 		_, err := client.CreateInlineComment(ctx, input.Owner, input.Name, input.Number, ghclient.InlineCommentOpts{
 			CommitID:  p.sha,
 			Path:      p.in.Path,
@@ -1180,7 +1207,7 @@ func (s *Server) submitReview(ctx context.Context, input *submitReviewInput) (*s
 			Side:      p.side,
 			StartLine: p.in.StartLine,
 			StartSide: p.side,
-			InReplyTo: p.in.InReplyTo,
+			InReplyTo: inReplyTo,
 		})
 		if err != nil {
 			return nil, translateCreateError(err, input, &p, len(postedIDs))
