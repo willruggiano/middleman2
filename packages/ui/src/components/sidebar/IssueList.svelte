@@ -11,22 +11,27 @@
   let refreshHandle: ReturnType<typeof setInterval> | null = null;
 
   $effect(() => {
-    // Avoid reading reactive sync state here — it would re-run
-    // this effect (and restart the interval + refire loadIssues)
-    // on every /sync/status poll. Use the event-based
-    // subscribeSyncComplete instead.
+    // Event-based subscribe, debounced so a flapping sync
+    // doesn't cause one /issues hit per retry cycle. See the
+    // matching comment in PullList for the full story.
     void issues.loadIssues();
 
     refreshHandle = setInterval(() => {
       void issues.loadIssues();
     }, 15_000);
 
+    let syncDebounce: ReturnType<typeof setTimeout> | null = null;
     const unsub = sync.subscribeSyncComplete(() => {
-      void issues.loadIssues();
+      if (syncDebounce !== null) clearTimeout(syncDebounce);
+      syncDebounce = setTimeout(() => {
+        syncDebounce = null;
+        void issues.loadIssues();
+      }, 2_000);
     });
 
     return () => {
       if (refreshHandle !== null) clearInterval(refreshHandle);
+      if (syncDebounce !== null) clearTimeout(syncDebounce);
       unsub();
     };
   });

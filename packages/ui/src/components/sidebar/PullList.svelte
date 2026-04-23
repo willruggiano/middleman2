@@ -65,22 +65,28 @@
     // read any reactive sync state — earlier versions called
     // sync.getSyncState() here, which made $effect re-run on every
     // /sync/status poll (~every 2s while sync is running), which
-    // in turn fired another loadPulls() per tick. Effectively gave
-    // us ~1 req/s of pulls traffic under load. Use the event-based
-    // subscribeSyncComplete so we only refresh when a sync actually
-    // finishes.
+    // in turn fired another loadPulls() per tick. Use the
+    // event-based subscribeSyncComplete instead, and debounce it
+    // so a flapping sync (e.g. rapid fail/retry) can't still
+    // swamp /pulls.
     void pulls.loadPulls();
 
     refreshHandle = setInterval(() => {
       void pulls.loadPulls();
     }, 15_000);
 
+    let syncDebounce: ReturnType<typeof setTimeout> | null = null;
     const unsub = sync.subscribeSyncComplete(() => {
-      void pulls.loadPulls();
+      if (syncDebounce !== null) clearTimeout(syncDebounce);
+      syncDebounce = setTimeout(() => {
+        syncDebounce = null;
+        void pulls.loadPulls();
+      }, 2_000);
     });
 
     return () => {
       if (refreshHandle !== null) clearInterval(refreshHandle);
+      if (syncDebounce !== null) clearTimeout(syncDebounce);
       unsub();
     };
   });

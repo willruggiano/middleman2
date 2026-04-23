@@ -58,18 +58,24 @@
       }
     }, 15_000);
 
-    // Event-based subscription — reading reactive sync state here
-    // would re-run this effect on every /sync/status poll.
+    // Event-based subscription, debounced so rapid sync flaps
+    // (e.g. fail/retry cycles) don't hammer /pulls or /issues.
+    let syncDebounce: ReturnType<typeof setTimeout> | null = null;
     const unsub = sync.subscribeSyncComplete(() => {
-      if (listType === "mrs") {
-        void pulls.loadPulls(repoParams);
-      } else {
-        void issues.loadIssues(repoParams);
-      }
+      if (syncDebounce !== null) clearTimeout(syncDebounce);
+      syncDebounce = setTimeout(() => {
+        syncDebounce = null;
+        if (listType === "mrs") {
+          void pulls.loadPulls(repoParams);
+        } else {
+          void issues.loadIssues(repoParams);
+        }
+      }, 2_000);
     });
 
     return () => {
       if (refreshHandle !== null) clearInterval(refreshHandle);
+      if (syncDebounce !== null) clearTimeout(syncDebounce);
       unsub();
     };
   });
