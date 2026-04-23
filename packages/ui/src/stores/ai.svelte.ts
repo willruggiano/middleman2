@@ -21,6 +21,14 @@ export function createAIStore(opts?: AIStoreOptions) {
   let loading = $state(false);
   let errorMsg = $state<string | null>(null);
   let pollHandle: ReturnType<typeof setInterval> | null = null;
+  // Ids the user just deleted. If a refresh poll races ahead of
+  // the server's list-filter (e.g. running against an older binary
+  // that still returns closed threads), the card can bounce back
+  // after a successful DELETE. Keep the id blacklisted for a short
+  // window so the next refresh can't revive a dead row.
+  const deletedThreadIds = new Set<number>();
+  const deletedQuestionIds = new Set<number>();
+  const TOMBSTONE_MS = 15_000;
 
   function prefix(): string {
     return `${getBasePath()}api/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${number}`;
@@ -64,8 +72,14 @@ export function createAIStore(opts?: AIStoreOptions) {
         threads: AIThread[] | null;
         questions: AIQuestion[] | null;
       };
-      threads = data.threads ?? [];
-      questions = data.questions ?? [];
+      const raw = data.threads ?? [];
+      const rawQ = data.questions ?? [];
+      // Filter out anything the user just deleted. Protects
+      // against server versions that still surface closed rows.
+      threads = raw.filter((t) => !deletedThreadIds.has(t.id));
+      questions = rawQ.filter(
+        (q) => !deletedQuestionIds.has(q.id) && !deletedThreadIds.has(q.thread_id),
+      );
     } catch {
       /* swallow; next poll will retry */
     } finally {
@@ -151,6 +165,8 @@ export function createAIStore(opts?: AIStoreOptions) {
           `Close thread failed: HTTP ${res.status}`;
         return false;
       }
+      deletedThreadIds.add(threadID);
+      setTimeout(() => deletedThreadIds.delete(threadID), TOMBSTONE_MS);
       threads = threads.filter((t) => t.id !== threadID);
       questions = questions.filter((q) => q.thread_id !== threadID);
       return true;
@@ -174,6 +190,8 @@ export function createAIStore(opts?: AIStoreOptions) {
           `Cancel question failed: HTTP ${res.status}`;
         return false;
       }
+      deletedQuestionIds.add(questionID);
+      setTimeout(() => deletedQuestionIds.delete(questionID), TOMBSTONE_MS);
       questions = questions.filter((q) => q.id !== questionID);
       return true;
     } catch (err) {
