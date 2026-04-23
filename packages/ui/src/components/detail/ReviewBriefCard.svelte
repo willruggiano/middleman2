@@ -447,6 +447,13 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    /* The review surface puts us inside a flex column with
+       overflow:hidden and DiffView takes the remaining space with
+       flex:1. Without a cap here, a long brief pushes past the
+       visible area and becomes unreachable. 50vh keeps the diff
+       in view and lets the brief scroll internally. */
+    max-height: 50vh;
+    overflow-y: auto;
   }
 
   .brief__section {
