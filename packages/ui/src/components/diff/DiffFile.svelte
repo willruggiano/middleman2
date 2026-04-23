@@ -614,12 +614,27 @@
         <div class="binary-notice">Binary file changed</div>
       {:else}
         <div class="file-rows" class:file-rows--split={layout === "split"}>
+          {#if renderedFile.hunks[0] && (renderedFile.hunks[0].new_start > 1 || renderedFile.hunks[0].old_start > 1)}
+            {@const firstHunk = renderedFile.hunks[0]}
+            <CollapsedRegion
+              position="top"
+              lineCount={Math.max(firstHunk.new_start - 1, firstHunk.old_start - 1)}
+              path={renderedFile.path}
+              sha={currentCommitSha()}
+              {owner}
+              {name}
+              {number}
+              gapOldStart={1}
+              gapNewStart={1}
+            />
+          {/if}
           {#each renderedFile.hunks as hunk, hunkIdx}
             {#if hunkIdx > 0}
               {@const gap = computeCollapsedLines(renderedFile.hunks, hunkIdx)}
               {@const prev = renderedFile.hunks[hunkIdx - 1]}
               {#if gap > 0 && prev}
                 <CollapsedRegion
+                  position="middle"
                   lineCount={gap}
                   path={renderedFile.path}
                   sha={currentCommitSha()}
@@ -932,6 +947,20 @@
               {/each}
             {/if}
           {/each}
+          {#if renderedFile.hunks.length > 0}
+            {@const lastHunk = renderedFile.hunks[renderedFile.hunks.length - 1]!}
+            <CollapsedRegion
+              position="bottom"
+              lineCount={0}
+              path={renderedFile.path}
+              sha={currentCommitSha()}
+              {owner}
+              {name}
+              {number}
+              gapOldStart={lastHunk.old_start + lastHunk.old_count}
+              gapNewStart={lastHunk.new_start + lastHunk.new_count}
+            />
+          {/if}
         </div>
       {/if}
     </div>

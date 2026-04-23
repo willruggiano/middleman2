@@ -2,11 +2,16 @@
   import { getStores } from "../../context.js";
 
   interface Props {
-    // Total number of unchanged lines in the gap between hunks.
+    // "top" = collapsed section above the first hunk (known
+    //         size, one-directional expand from bottom edge).
+    // "middle" = between two hunks (known size, two-directional).
+    // "bottom" = after the last hunk (unknown size — keep
+    //            fetching downward until the backend returns
+    //            an empty slice).
+    position?: "top" | "middle" | "bottom";
     lineCount: number;
-    // Kept for interface parity with the old call site; the diff
-    // store already knows the current PR so these props are
-    // unused by the fetch itself.
+    // Kept for interface parity; the diff store already knows
+    // the current PR so these props aren't used by the fetch.
     owner: string;
     name: string;
     number: number;
@@ -20,6 +25,7 @@
   }
 
   const {
+    position = "middle",
     lineCount,
     path,
     sha,
@@ -27,24 +33,37 @@
     gapNewStart,
   }: Props = $props();
 
-  const { diff: diffStore } = getStores();
-
-  const STEP = 10;               // lines per +N button click
-  const SCRUB_PIXELS_PER_LINE = 18; // wheel deltaY threshold per line
+  const STEP = 10;                    // lines per row click
+  const SCRUB_PIXELS_PER_LINE = 18;   // wheel deltaY threshold per line
 
   // topCount = lines revealed extending the previous hunk downward.
   // bottomCount = lines revealed extending the next hunk upward.
-  // They grow toward each other; when their sum reaches lineCount the
-  // collapsed region disappears entirely.
   let topCount = $state(0);
   let bottomCount = $state(0);
   let topLines = $state<string[]>([]);
   let bottomLines = $state<string[]>([]);
   let loading = $state(false);
   let errorMsg = $state<string | null>(null);
+  // For the "bottom" (end-of-file) region we don't know how many
+  // lines are left below the last hunk; a short/empty response
+  // tells us we hit EOF.
+  let bottomExhausted = $state(false);
 
-  const remaining = $derived(Math.max(0, lineCount - topCount - bottomCount));
-  const fullyExpanded = $derived(remaining === 0);
+  const { diff: diffStore } = getStores();
+
+  // `remaining` is the distance between the two revealed edges in
+  // the known-size cases. For a "bottom" region it's unknown, so
+  // we just track exhausted vs. not.
+  const remaining = $derived(
+    position === "bottom"
+      ? bottomExhausted
+        ? 0
+        : Infinity
+      : Math.max(0, lineCount - topCount - bottomCount),
+  );
+  const fullyExpanded = $derived(
+    position === "bottom" ? bottomExhausted : remaining === 0,
+  );
 
   async function fetchRange(start: number, end: number): Promise<string[]> {
     if (end < start) return [];
@@ -52,10 +71,11 @@
   }
 
   // expandTop pulls N more lines starting from where the top
-  // reveal currently ends (gapNewStart + topCount onward).
+  // reveal currently ends. For "bottom" regions this is how we
+  // extend the last hunk downward (only one edge to grow).
   async function expandTop(n: number): Promise<void> {
     if (loading || fullyExpanded) return;
-    const take = Math.min(n, remaining);
+    const take = position === "bottom" ? n : Math.min(n, remaining);
     if (take <= 0) return;
     const start = gapNewStart + topCount;
     const end = start + take - 1;
@@ -65,6 +85,9 @@
       const lines = await fetchRange(start, end);
       topLines = [...topLines, ...lines];
       topCount += lines.length;
+      if (position === "bottom" && lines.length < take) {
+        bottomExhausted = true;
+      }
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : String(err);
     } finally {
@@ -72,9 +95,10 @@
     }
   }
 
-  // expandBottom pulls N lines upward from the bottom edge of the
-  // gap, which is gapNewStart + lineCount - 1 - bottomCount.
+  // expandBottom reveals upward from the bottom edge of the gap,
+  // extending the next hunk's context. Only applies to top/middle.
   async function expandBottom(n: number): Promise<void> {
+    if (position === "bottom") return; // no lower anchor to grow toward
     if (loading || fullyExpanded) return;
     const take = Math.min(n, remaining);
     if (take <= 0) return;
@@ -95,6 +119,29 @@
 
   async function expandAll(): Promise<void> {
     if (loading || fullyExpanded) return;
+    if (position === "bottom") {
+      // Unknown size — keep pulling chunks until the backend
+      // returns fewer lines than we asked for (EOF).
+      const CHUNK = 500;
+      while (!bottomExhausted) {
+        const start = gapNewStart + topCount;
+        const end = start + CHUNK - 1;
+        loading = true;
+        errorMsg = null;
+        try {
+          const lines = await fetchRange(start, end);
+          topLines = [...topLines, ...lines];
+          topCount += lines.length;
+          if (lines.length < CHUNK) bottomExhausted = true;
+        } catch (err) {
+          errorMsg = err instanceof Error ? err.message : String(err);
+          break;
+        } finally {
+          loading = false;
+        }
+      }
+      return;
+    }
     const start = gapNewStart + topCount;
     const end = gapNewStart + lineCount - 1 - bottomCount;
     if (end < start) return;
@@ -102,7 +149,7 @@
     errorMsg = null;
     try {
       const lines = await fetchRange(start, end);
-      // Append the whole middle to the top side so the ordering
+      // Append the whole middle to the top side so ordering
       // stays stable (top reveals + middle + bottom reveals).
       topLines = [...topLines, ...lines];
       topCount += lines.length;
@@ -113,6 +160,46 @@
     }
   }
 
+  // Default row click expands by STEP. For top-of-file and
+  // between-hunks, that means split across both edges (STEP/2
+  // each); for bottom-of-file, the whole STEP extends downward
+  // since there's no other edge.
+  async function expandStep(): Promise<void> {
+    if (position === "bottom") {
+      await expandTop(STEP);
+      return;
+    }
+    if (position === "top") {
+      // One-directional: reveal STEP lines at the bottom edge
+      // of the gap so they sit adjacent to the first hunk, where
+      // the reviewer is most likely looking.
+      await expandBottom(STEP);
+      return;
+    }
+    // Between-hunks: split evenly so both hunks get more context.
+    const half = Math.ceil(STEP / 2);
+    await expandTop(half);
+    if (!fullyExpanded) {
+      await expandBottom(STEP - half);
+    }
+  }
+
+  function onRowClick(e: MouseEvent): void {
+    // Don't treat the click-after-drag as a paginate action — the
+    // scrub handler toggles `scrubbing` during pointerdown, so if
+    // we've just finished a hold-scrub, let it pass without
+    // advancing by a step.
+    if (scrubHadWheel) {
+      scrubHadWheel = false;
+      return;
+    }
+    if (e.shiftKey) {
+      void expandAll();
+      return;
+    }
+    void expandStep();
+  }
+
   // --- Press-and-hold scrub ---
 
   let scrubbing = $state(false);
@@ -120,17 +207,23 @@
   // trigger a line reveal instead of getting lost.
   let topPixelBuf = 0;
   let bottomPixelBuf = 0;
-  let pointerId: number | null = null;
+  // Was a wheel event seen during the current hold? If so the
+  // pointerup's subsequent click should be suppressed — the user
+  // scrubbed, they didn't intend a click-to-paginate.
+  let scrubHadWheel = false;
 
   function onPointerDown(e: PointerEvent): void {
     if (fullyExpanded) return;
-    // Ignore right-clicks / secondary buttons.
     if (e.button !== 0 && e.pointerType === "mouse") return;
     scrubbing = true;
-    pointerId = e.pointerId;
     topPixelBuf = 0;
     bottomPixelBuf = 0;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    scrubHadWheel = false;
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore — some browsers reject pointer capture on synthetic events */
+    }
     window.addEventListener("wheel", onWheel, { passive: false });
     window.addEventListener("pointerup", onPointerUp, { once: true });
     window.addEventListener("pointercancel", onPointerUp, { once: true });
@@ -138,7 +231,6 @@
 
   function onPointerUp(): void {
     scrubbing = false;
-    pointerId = null;
     topPixelBuf = 0;
     bottomPixelBuf = 0;
     window.removeEventListener("wheel", onWheel);
@@ -148,14 +240,12 @@
     if (!scrubbing) return;
     e.preventDefault();
     if (fullyExpanded) return;
+    scrubHadWheel = true;
 
-    // Normalize deltaMode to pixels — line-mode wheels (Firefox on
-    // some platforms) report deltaY in "lines" not px.
     const pxPerUnit = e.deltaMode === 1 ? 16 : 1;
     const dy = e.deltaY * pxPerUnit;
 
     if (dy > 0) {
-      // Scroll down: feed lines into the top edge of the gap.
       topPixelBuf += dy;
       while (topPixelBuf >= SCRUB_PIXELS_PER_LINE && !fullyExpanded) {
         topPixelBuf -= SCRUB_PIXELS_PER_LINE;
@@ -165,6 +255,12 @@
       bottomPixelBuf += -dy;
       while (bottomPixelBuf >= SCRUB_PIXELS_PER_LINE && !fullyExpanded) {
         bottomPixelBuf -= SCRUB_PIXELS_PER_LINE;
+        if (position === "bottom") {
+          // No bottom anchor; treat an upward scroll as a
+          // no-op for end-of-file regions rather than surprise
+          // the reviewer with phantom context.
+          break;
+        }
         void expandBottom(1);
       }
     }
@@ -177,14 +273,29 @@
     return gapNewStart + i;
   }
   function oldNumForBottom(i: number): number {
-    // The bottom edge sits at gapOldStart + lineCount - 1; when we
-    // have `bottomCount` lines revealed, they map to old numbers
-    // [gapOldStart + lineCount - bottomCount, ..., gapOldStart + lineCount - 1].
     return gapOldStart + lineCount - bottomCount + i;
   }
   function newNumForBottom(i: number): number {
     return gapNewStart + lineCount - bottomCount + i;
   }
+
+  // Label copy. Clickable affordance is the whole row; tooltip
+  // carries the keyboard/mouse-modifier hints.
+  const label = $derived.by<string>(() => {
+    if (errorMsg) return errorMsg;
+    if (loading) return "Loading…";
+    if (position === "bottom") {
+      if (bottomExhausted) return "End of file";
+      return "More below — click to expand";
+    }
+    return `${remaining} unchanged ${remaining === 1 ? "line" : "lines"} — click to expand`;
+  });
+
+  const tooltip = $derived(
+    fullyExpanded
+      ? ""
+      : "Click to expand · Shift-click to show all · Press and hold, then scroll to scrub",
+  );
 </script>
 
 {#if topLines.length > 0}
@@ -203,68 +314,25 @@
     class="collapsed-region"
     class:collapsed-region--scrubbing={scrubbing}
     class:collapsed-region--error={!!errorMsg}
+    class:collapsed-region--bottom={position === "bottom"}
     onpointerdown={onPointerDown}
+    onclick={onRowClick}
     role="button"
-    tabindex="-1"
-    title="Press and hold, then scroll to expand context lines"
+    tabindex="0"
+    onkeydown={(e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        if (e.shiftKey) void expandAll();
+        else void expandStep();
+      }
+    }}
+    title={tooltip}
   >
     <span class="collapsed-gutter"></span>
     <span class="collapsed-gutter"></span>
-    <div class="collapsed-controls">
-      <button
-        type="button"
-        class="collapsed-btn"
-        title="Show {Math.min(STEP, remaining)} lines below the hunk above"
-        onclick={(e) => {
-          e.stopPropagation();
-          void expandTop(STEP);
-        }}
-        disabled={loading}
-        aria-label="Expand down by {STEP} lines"
-      >
-        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6">
-          <path d="M6 2v8M3 7l3 3 3-3" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        +{Math.min(STEP, remaining)}
-      </button>
-      <span class="collapsed-label">
-        {#if errorMsg}
-          <span class="collapsed-err">{errorMsg}</span>
-        {:else if loading}
-          loading…
-        {:else}
-          {remaining} unchanged {remaining === 1 ? "line" : "lines"} · hold + scroll to expand
-        {/if}
-      </span>
-      <button
-        type="button"
-        class="collapsed-btn"
-        title="Show {Math.min(STEP, remaining)} lines above the hunk below"
-        onclick={(e) => {
-          e.stopPropagation();
-          void expandBottom(STEP);
-        }}
-        disabled={loading}
-        aria-label="Expand up by {STEP} lines"
-      >
-        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6">
-          <path d="M6 10V2M3 5l3-3 3 3" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        +{Math.min(STEP, remaining)}
-      </button>
-      <button
-        type="button"
-        class="collapsed-btn collapsed-btn--all"
-        title="Show all {remaining} unchanged lines"
-        onclick={(e) => {
-          e.stopPropagation();
-          void expandAll();
-        }}
-        disabled={loading}
-      >
-        all
-      </button>
-    </div>
+    <span class="collapsed-label" class:collapsed-label--error={!!errorMsg}>
+      {label}
+    </span>
   </div>
 {/if}
 
@@ -282,22 +350,30 @@
 <style>
   .collapsed-region {
     display: flex;
-    align-items: stretch;
+    align-items: center;
     border-top: 1px dashed var(--diff-collapsed-border);
     border-bottom: 1px dashed var(--diff-collapsed-border);
     background: var(--diff-collapsed-bg);
     color: var(--diff-line-num);
     line-height: 20px;
     user-select: none;
-    cursor: ns-resize;
+    cursor: pointer;
   }
 
   .collapsed-region:hover {
-    background: color-mix(in srgb, var(--accent-blue) 5%, var(--diff-collapsed-bg));
+    background: color-mix(in srgb, var(--accent-blue) 8%, var(--diff-collapsed-bg));
+    border-top-color: var(--accent-blue);
+    border-bottom-color: var(--accent-blue);
+  }
+
+  .collapsed-region:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: -2px;
   }
 
   .collapsed-region--scrubbing {
-    background: color-mix(in srgb, var(--accent-blue) 12%, var(--diff-collapsed-bg));
+    cursor: ns-resize;
+    background: color-mix(in srgb, var(--accent-blue) 16%, var(--diff-collapsed-bg));
     border-top-color: var(--accent-blue);
     border-bottom-color: var(--accent-blue);
   }
@@ -307,25 +383,24 @@
     border-bottom-color: var(--accent-red);
   }
 
+  .collapsed-region--bottom {
+    /* End-of-file: only the top edge of the bar is "docked" to
+       the preceding hunk. A single border reads more as an "end
+       stop" than a separator. */
+    border-bottom: none;
+  }
+
   .collapsed-gutter {
     width: 50px;
     flex-shrink: 0;
     background: var(--diff-collapsed-bg);
   }
 
-  .collapsed-controls {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+  .collapsed-label {
     padding: 2px 12px;
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--diff-hunk-text);
-    flex: 1;
-    min-width: 0;
-  }
-
-  .collapsed-label {
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -333,37 +408,8 @@
     white-space: nowrap;
   }
 
-  .collapsed-err {
+  .collapsed-label--error {
     color: var(--accent-red);
-  }
-
-  .collapsed-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding: 2px 6px;
-    font-family: inherit;
-    font-size: 10px;
-    border: 1px solid var(--border-muted);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text-secondary);
-    cursor: pointer;
-    flex-shrink: 0;
-  }
-
-  .collapsed-btn:hover:not(:disabled) {
-    border-color: var(--accent-blue);
-    color: var(--accent-blue);
-  }
-
-  .collapsed-btn:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .collapsed-btn--all {
-    padding: 2px 10px;
   }
 
   .expanded-line {
