@@ -99,10 +99,10 @@
       {#if commits}
         <span class="commit-section__count">{commits.length}</span>
       {/if}
+      {#if reviewProgress && reviewProgress.total > 0}
+        <span class="commit-section__progress">{reviewProgress.reviewed}/{reviewProgress.total}</span>
+      {/if}
     </button>
-    {#if reviewProgress && reviewProgress.total > 0}
-      <span class="commit-section__progress">{reviewProgress.reviewed}/{reviewProgress.total}</span>
-    {/if}
     <ScopePill {scope} onreset={diffStore.resetToHead} />
     {#if commits && commits.length > 0}
       <div class="commit-section__nav">
@@ -182,6 +182,11 @@
     gap: 6px;
     flex: 1;
     min-width: 0;
+    /* Without overflow:hidden a narrow sidebar can't compress the
+       inner flex children enough, so label + count + progress
+       overflow past the button's right edge and paint on top of
+       the adjacent ScopePill / nav. */
+    overflow: hidden;
     padding: 4px 6px 4px 10px;
     border: none;
     background: none;
