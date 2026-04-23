@@ -13,6 +13,7 @@
     toggleSidebar,
     isSidebarToggleEnabled,
   } from "../../stores/sidebar.svelte.js";
+  import ClaudeSessionsButton from "./ClaudeSessionsButton.svelte";
 
   const hasSidebarStrip = $derived(
     getPage() === "issues"
@@ -117,6 +118,7 @@
   </nav>
 
   <div class="header-right">
+    <ClaudeSessionsButton />
     {#if !getUIConfig().hideSync}
       <button class="action-btn" onclick={handleSync} disabled={syncing}>
         {syncing ? "Syncing..." : "Sync"}

@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ai/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get ai sessions */
+        get: operations["get-ai-sessions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/author-groups": {
         parameters: {
             query?: never;
@@ -827,6 +844,53 @@ export interface components {
             status: string;
             /** Format: int64 */
             thread_id: number;
+        };
+        AiSessionBrief: {
+            created_at: string;
+            depth: string;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            mr_id: number;
+            /** Format: int64 */
+            mr_number: number;
+            mr_title: string;
+            platform_host?: string;
+            repo_name: string;
+            repo_owner: string;
+            started_at?: string;
+            status: string;
+        };
+        AiSessionThread: {
+            /** Format: int64 */
+            anchor_line: number;
+            anchor_side: string;
+            created_at: string;
+            has_worktree: boolean;
+            /** Format: int64 */
+            id: number;
+            latest_question_status?: string;
+            /** Format: int64 */
+            mr_id: number;
+            /** Format: int64 */
+            mr_number: number;
+            mr_title: string;
+            /** Format: int64 */
+            open_question_count: number;
+            path: string;
+            platform_host?: string;
+            repo_name: string;
+            repo_owner: string;
+        };
+        AiSessionsResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AiSessionsResponse.json
+             */
+            readonly $schema?: string;
+            briefs: components["schemas"]["AiSessionBrief"][] | null;
+            threads: components["schemas"]["AiSessionThread"][] | null;
         };
         AiThreadCreatedOutputBody: {
             /**
@@ -1800,6 +1864,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActivityResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-ai-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiSessionsResponse"];
                 };
             };
             /** @description Error */

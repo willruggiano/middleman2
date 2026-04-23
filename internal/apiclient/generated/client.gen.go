@@ -90,6 +90,47 @@ type AiQuestionResponse struct {
 	ThreadId      int64      `json:"thread_id"`
 }
 
+// AiSessionBrief defines model for AiSessionBrief.
+type AiSessionBrief struct {
+	CreatedAt    string  `json:"created_at"`
+	Depth        string  `json:"depth"`
+	Id           int64   `json:"id"`
+	MrId         int64   `json:"mr_id"`
+	MrNumber     int64   `json:"mr_number"`
+	MrTitle      string  `json:"mr_title"`
+	PlatformHost *string `json:"platform_host,omitempty"`
+	RepoName     string  `json:"repo_name"`
+	RepoOwner    string  `json:"repo_owner"`
+	StartedAt    *string `json:"started_at,omitempty"`
+	Status       string  `json:"status"`
+}
+
+// AiSessionThread defines model for AiSessionThread.
+type AiSessionThread struct {
+	AnchorLine           int64   `json:"anchor_line"`
+	AnchorSide           string  `json:"anchor_side"`
+	CreatedAt            string  `json:"created_at"`
+	HasWorktree          bool    `json:"has_worktree"`
+	Id                   int64   `json:"id"`
+	LatestQuestionStatus *string `json:"latest_question_status,omitempty"`
+	MrId                 int64   `json:"mr_id"`
+	MrNumber             int64   `json:"mr_number"`
+	MrTitle              string  `json:"mr_title"`
+	OpenQuestionCount    int64   `json:"open_question_count"`
+	Path                 string  `json:"path"`
+	PlatformHost         *string `json:"platform_host,omitempty"`
+	RepoName             string  `json:"repo_name"`
+	RepoOwner            string  `json:"repo_owner"`
+}
+
+// AiSessionsResponse defines model for AiSessionsResponse.
+type AiSessionsResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string            `json:"$schema,omitempty"`
+	Briefs  *[]AiSessionBrief  `json:"briefs"`
+	Threads *[]AiSessionThread `json:"threads"`
+}
+
 // AiThreadCreatedOutputBody defines model for AiThreadCreatedOutputBody.
 type AiThreadCreatedOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -1085,6 +1126,9 @@ type ClientInterface interface {
 	// GetActivity request
 	GetActivity(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetAiSessions request
+	GetAiSessions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetAuthorGroups request
 	GetAuthorGroups(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1283,6 +1327,18 @@ type ClientInterface interface {
 
 func (c *Client) GetActivity(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetActivityRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetAiSessions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAiSessionsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -2248,6 +2304,33 @@ func NewGetActivityRequest(server string, params *GetActivityParams) (*http.Requ
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetAiSessionsRequest generates requests for GetAiSessions
+func NewGetAiSessionsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/ai/sessions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -5233,6 +5316,9 @@ type ClientWithResponsesInterface interface {
 	// GetActivityWithResponse request
 	GetActivityWithResponse(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*GetActivityResponse, error)
 
+	// GetAiSessionsWithResponse request
+	GetAiSessionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAiSessionsResponse, error)
+
 	// GetAuthorGroupsWithResponse request
 	GetAuthorGroupsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAuthorGroupsResponse, error)
 
@@ -5446,6 +5532,29 @@ func (r GetActivityResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetActivityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetAiSessionsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *AiSessionsResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAiSessionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAiSessionsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -6671,6 +6780,15 @@ func (c *ClientWithResponses) GetActivityWithResponse(ctx context.Context, param
 	return ParseGetActivityResponse(rsp)
 }
 
+// GetAiSessionsWithResponse request returning *GetAiSessionsResponse
+func (c *ClientWithResponses) GetAiSessionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAiSessionsResponse, error) {
+	rsp, err := c.GetAiSessions(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAiSessionsResponse(rsp)
+}
+
 // GetAuthorGroupsWithResponse request returning *GetAuthorGroupsResponse
 func (c *ClientWithResponses) GetAuthorGroupsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAuthorGroupsResponse, error) {
 	rsp, err := c.GetAuthorGroups(ctx, reqEditors...)
@@ -7308,6 +7426,39 @@ func ParseGetActivityResponse(rsp *http.Response) (*GetActivityResponse, error) 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ActivityResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAiSessionsResponse parses an HTTP response from a GetAiSessionsWithResponse call
+func ParseGetAiSessionsResponse(rsp *http.Response) (*GetAiSessionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAiSessionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AiSessionsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

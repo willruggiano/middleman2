@@ -412,6 +412,7 @@ func (s *Server) registerAPI(api huma.API) {
 	}, s.triggerSync)
 	huma.Get(api, "/sync/status", s.syncStatus)
 	huma.Get(api, "/me", s.getViewer)
+	huma.Get(api, "/ai/sessions", s.getAISessions)
 	huma.Get(api, "/rate-limits", s.getRateLimits)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/commits", s.getCommits)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/diff", s.getDiff)

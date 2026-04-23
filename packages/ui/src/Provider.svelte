@@ -79,6 +79,7 @@
     createAuthorGroupsStore,
   } from "./stores/authorGroups.svelte.js";
   import { createViewerStore } from "./stores/viewer.svelte.js";
+  import { createAISessionsStore } from "./stores/aiSessions.svelte.js";
 
   interface Props {
     client: MiddlemanClient;
@@ -227,6 +228,9 @@
     const viewerStore = createViewerStore({ client: cl });
     void viewerStore.load();
 
+    const aiSessionsStore = createAISessionsStore({ client: cl });
+    aiSessionsStore.startPolling();
+
     const si: StoreInstances = {
       pulls: pullsStore,
       issues: issuesStore,
@@ -242,6 +246,7 @@
       brief: briefStore,
       authorGroups: authorGroupsStore,
       viewer: viewerStore,
+      aiSessions: aiSessionsStore,
     };
 
     if (roborevBase) {

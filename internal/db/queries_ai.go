@@ -28,6 +28,32 @@ type AIThread struct {
 	ClosedAt        *time.Time
 }
 
+// ActiveAIThreadWithContext is an active thread plus enough repo/PR
+// metadata for the global sessions panel to render a row without
+// a second lookup per row.
+type ActiveAIThreadWithContext struct {
+	AIThread
+	RepoOwner             string
+	RepoName              string
+	PlatformHost          string
+	MRNumber              int
+	MRTitle               string
+	LatestQuestionStatus  string // "queued" | "running" | "done" | "failed" | "cancelled" | ""
+	OpenQuestionCount     int    // questions in queued/running state
+	LatestQuestionStarted *time.Time
+}
+
+// InFlightAIBriefWithContext is a queued/running brief enriched with
+// repo + PR metadata for the same panel.
+type InFlightAIBriefWithContext struct {
+	AIBrief
+	RepoOwner    string
+	RepoName     string
+	PlatformHost string
+	MRNumber     int
+	MRTitle      string
+}
+
 // AIBrief is a structural review brief for a PR. One-per-(mr_id,
 // head_sha): regenerating after a push creates a new row, so older
 // briefs remain as historical artifacts.
@@ -171,6 +197,141 @@ func (d *DB) ListAIThreadsForMR(ctx context.Context, mrID int64) ([]AIThread, er
 			return nil, err
 		}
 		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// ListActiveAIThreads returns every open Q&A thread across all PRs,
+// enriched with the repo + PR metadata needed to render a global
+// "Claude sessions" panel. Threads are ordered newest-first so
+// recently-created ones bubble up.
+func (d *DB) ListActiveAIThreads(ctx context.Context) ([]ActiveAIThreadWithContext, error) {
+	rows, err := d.ro.QueryContext(ctx, `
+		SELECT t.id, t.mr_id, t.path, t.anchor_side, t.anchor_line,
+		       t.hunk_start_line, t.hunk_end_line, t.selection_text, t.commit_sha,
+		       t.claude_session_id, t.worktree_path, t.status, t.created_at, t.closed_at,
+		       r.owner, r.name, COALESCE(r.platform_host, ''),
+		       m.number, m.title,
+		       (SELECT status FROM middleman_ai_questions q
+		         WHERE q.thread_id = t.id
+		         ORDER BY q.id DESC LIMIT 1) AS latest_question_status,
+		       (SELECT COUNT(*) FROM middleman_ai_questions q
+		         WHERE q.thread_id = t.id
+		           AND q.status IN ('queued', 'running')) AS open_question_count,
+		       (SELECT started_at FROM middleman_ai_questions q
+		         WHERE q.thread_id = t.id
+		         ORDER BY q.id DESC LIMIT 1) AS latest_question_started
+		  FROM middleman_ai_threads t
+		  JOIN middleman_merge_requests m ON m.id = t.mr_id
+		  JOIN middleman_repos r ON r.id = m.repo_id
+		 WHERE t.status = 'active'
+		 ORDER BY t.id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list active threads: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ActiveAIThreadWithContext
+	for rows.Next() {
+		var item ActiveAIThreadWithContext
+		var sessionID, worktree, selection sql.NullString
+		var hunkStart, hunkEnd sql.NullInt64
+		var closedAt sql.NullTime
+		var latestStatus sql.NullString
+		var latestStarted sql.NullTime
+		if err := rows.Scan(
+			&item.ID, &item.MergeRequestID, &item.Path, &item.AnchorSide, &item.AnchorLine,
+			&hunkStart, &hunkEnd, &selection, &item.CommitSHA,
+			&sessionID, &worktree, &item.Status, &item.CreatedAt, &closedAt,
+			&item.RepoOwner, &item.RepoName, &item.PlatformHost,
+			&item.MRNumber, &item.MRTitle,
+			&latestStatus, &item.OpenQuestionCount, &latestStarted,
+		); err != nil {
+			return nil, fmt.Errorf("scan active thread: %w", err)
+		}
+		if hunkStart.Valid {
+			v := int(hunkStart.Int64)
+			item.HunkStartLine = &v
+		}
+		if hunkEnd.Valid {
+			v := int(hunkEnd.Int64)
+			item.HunkEndLine = &v
+		}
+		if selection.Valid {
+			item.SelectionText = &selection.String
+		}
+		if sessionID.Valid {
+			item.ClaudeSessionID = &sessionID.String
+		}
+		if worktree.Valid {
+			item.WorktreePath = &worktree.String
+		}
+		if closedAt.Valid {
+			item.ClosedAt = &closedAt.Time
+		}
+		if latestStatus.Valid {
+			item.LatestQuestionStatus = latestStatus.String
+		}
+		if latestStarted.Valid {
+			item.LatestQuestionStarted = &latestStarted.Time
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// ListInFlightAIBriefs returns queued/running briefs across all PRs
+// with repo + PR metadata. Briefs that already finished, failed, or
+// were cancelled are excluded; there's nothing to close there.
+func (d *DB) ListInFlightAIBriefs(ctx context.Context) ([]InFlightAIBriefWithContext, error) {
+	rows, err := d.ro.QueryContext(ctx, `
+		SELECT b.id, b.mr_id, b.head_sha, b.claude_session_id, b.worktree_path,
+		       b.status, b.depth, b.content, b.error, b.pid,
+		       b.created_at, b.started_at, b.completed_at,
+		       r.owner, r.name, COALESCE(r.platform_host, ''),
+		       m.number, m.title
+		  FROM middleman_ai_briefs b
+		  JOIN middleman_merge_requests m ON m.id = b.mr_id
+		  JOIN middleman_repos r ON r.id = m.repo_id
+		 WHERE b.status IN ('queued', 'running')
+		 ORDER BY b.id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list in-flight briefs: %w", err)
+	}
+	defer rows.Close()
+
+	var out []InFlightAIBriefWithContext
+	for rows.Next() {
+		var item InFlightAIBriefWithContext
+		var sessionID, worktree sql.NullString
+		var pid sql.NullInt64
+		var startedAt, completedAt sql.NullTime
+		if err := rows.Scan(
+			&item.ID, &item.MergeRequestID, &item.HeadSHA, &sessionID, &worktree,
+			&item.Status, &item.Depth, &item.Content, &item.Error, &pid,
+			&item.CreatedAt, &startedAt, &completedAt,
+			&item.RepoOwner, &item.RepoName, &item.PlatformHost,
+			&item.MRNumber, &item.MRTitle,
+		); err != nil {
+			return nil, fmt.Errorf("scan in-flight brief: %w", err)
+		}
+		if sessionID.Valid {
+			item.ClaudeSessionID = &sessionID.String
+		}
+		if worktree.Valid {
+			item.WorktreePath = &worktree.String
+		}
+		if pid.Valid {
+			v := int(pid.Int64)
+			item.PID = &v
+		}
+		if startedAt.Valid {
+			item.StartedAt = &startedAt.Time
+		}
+		if completedAt.Valid {
+			item.CompletedAt = &completedAt.Time
+		}
+		out = append(out, item)
 	}
 	return out, rows.Err()
 }

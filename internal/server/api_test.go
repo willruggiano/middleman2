@@ -4976,6 +4976,82 @@ func TestAPICreateAIThreadThenListThenDelete(t *testing.T) {
 	}
 }
 
+func TestAPIGetAISessions(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	ctx := context.Background()
+
+	client, database, headSHA, _ := setupTestServerForAIReview(t)
+
+	// Empty to start: no threads or briefs running.
+	resp, err := client.HTTP.GetAiSessionsWithResponse(ctx)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	if resp.JSON200.Threads != nil {
+		assert.Empty(*resp.JSON200.Threads)
+	}
+	if resp.JSON200.Briefs != nil {
+		assert.Empty(*resp.JSON200.Briefs)
+	}
+
+	// Spawn a thread so there's an active session to surface.
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberAiThreadsWithResponse(
+		ctx, "acme", "widget", 1,
+		generated.PostReposByOwnerByNamePullsByNumberAiThreadsJSONRequestBody{
+			Path:       "a.txt",
+			AnchorSide: "RIGHT",
+			AnchorLine: 1,
+			CommitSha:  headSHA,
+			Question:   "hello",
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	threadID := createResp.JSON200.Thread.Id
+
+	// Wait for the fake-claude subprocess to finish so the
+	// question row settles — the /ai/sessions query doesn't
+	// filter on question status, but the test is tidier.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got, err := database.GetAIQuestion(ctx, createResp.JSON200.Question.Id)
+		require.NoError(err)
+		if got.Status == "done" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("question never completed; last status=%q err=%q", got.Status, got.Error)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	// Sessions endpoint now shows the active thread.
+	resp2, err := client.HTTP.GetAiSessionsWithResponse(ctx)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp2.StatusCode())
+	require.NotNil(resp2.JSON200.Threads)
+	threads := *resp2.JSON200.Threads
+	require.Len(threads, 1)
+	assert.Equal(threadID, threads[0].Id)
+	assert.Equal("acme", threads[0].RepoOwner)
+	assert.Equal("widget", threads[0].RepoName)
+	assert.Equal(int64(1), threads[0].MrNumber)
+	assert.Equal("a.txt", threads[0].Path)
+
+	// Close the thread; sessions endpoint goes back to empty.
+	delResp, err := client.HTTP.DeleteAiThreadWithResponse(ctx, "acme", "widget", 1, threadID)
+	require.NoError(err)
+	require.Equal(http.StatusNoContent, delResp.StatusCode())
+
+	resp3, err := client.HTTP.GetAiSessionsWithResponse(ctx)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp3.StatusCode())
+	if resp3.JSON200.Threads != nil {
+		assert.Empty(*resp3.JSON200.Threads)
+	}
+}
+
 func TestAPIAddFollowUpQuestion(t *testing.T) {
 	require := require.New(t)
 	assert := Assert.New(t)
