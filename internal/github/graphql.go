@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -29,7 +30,7 @@ type gqlPRQuery struct {
 		PullRequests struct {
 			Nodes    []gqlPR
 			PageInfo pageInfo
-		} `graphql:"pullRequests(first: $pageSize, states: OPEN, after: $cursor)"`
+		} `graphql:"pullRequests(first: $pageSize, states: OPEN, after: $cursor, orderBy: {field: UPDATED_AT, direction: DESC})"`
 	} `graphql:"repository(owner: $owner, name: $name)"`
 }
 
@@ -555,10 +556,10 @@ func (g *GraphQLFetcher) ShouldBackoff() (bool, time.Duration) {
 }
 
 func (g *GraphQLFetcher) FetchRepoPRs(
-	ctx context.Context, owner, name string,
+	ctx context.Context, owner, name string, since time.Time,
 ) (*RepoBulkResult, error) {
 	result, err := g.fetchRepoPRsWithPageSize(
-		ctx, owner, name, topLevelPageSize,
+		ctx, owner, name, topLevelPageSize, since,
 	)
 	if err != nil {
 		slog.Warn("GraphQL query failed, retrying with smaller page",
@@ -566,18 +567,22 @@ func (g *GraphQLFetcher) FetchRepoPRs(
 			"err", err, "retryPageSize", retryPageSize,
 		)
 		result, err = g.fetchRepoPRsWithPageSize(
-			ctx, owner, name, retryPageSize,
+			ctx, owner, name, retryPageSize, since,
 		)
 	}
 	return result, err
 }
 
 func (g *GraphQLFetcher) fetchRepoPRsWithPageSize(
-	ctx context.Context, owner, name string, pageSize int,
+	ctx context.Context, owner, name string, pageSize int, since time.Time,
 ) (*RepoBulkResult, error) {
-	gqlPRs, err := fetchAllPages(ctx, func(
-		ctx context.Context, cursor *string,
-	) ([]gqlPR, pageInfo, error) {
+	// PRs come back in UPDATED_AT DESC order. Once a page contains
+	// a PR older than `since`, we keep the recent prefix of that
+	// page and stop paginating — everything below it is older
+	// still.
+	var gqlPRs []gqlPR
+	var cursor *string
+	for {
 		var q gqlPRQuery
 		vars := map[string]any{
 			"owner":    githubv4.String(owner),
@@ -586,13 +591,42 @@ func (g *GraphQLFetcher) fetchRepoPRsWithPageSize(
 			"cursor":   cursorVar(cursor),
 		}
 		if err := g.client.Query(ctx, &q, vars); err != nil {
-			return nil, pageInfo{}, err
+			return nil, err
 		}
-		return q.Repository.PullRequests.Nodes,
-			q.Repository.PullRequests.PageInfo, nil
-	})
-	if err != nil {
-		return nil, err
+		nodes := q.Repository.PullRequests.Nodes
+		pi := q.Repository.PullRequests.PageInfo
+
+		if !since.IsZero() {
+			cut := -1
+			for i, pr := range nodes {
+				if pr.UpdatedAt.Before(since) {
+					cut = i
+					break
+				}
+			}
+			if cut >= 0 {
+				gqlPRs = append(gqlPRs, nodes[:cut]...)
+				break
+			}
+		}
+		gqlPRs = append(gqlPRs, nodes...)
+
+		if !pi.HasNextPage {
+			break
+		}
+		if pi.EndCursor == "" {
+			return nil, fmt.Errorf(
+				"graphql pagination: hasNextPage true but endCursor empty",
+			)
+		}
+		if cursor != nil && pi.EndCursor == *cursor {
+			return nil, fmt.Errorf(
+				"graphql pagination: endCursor unchanged (%q)",
+				pi.EndCursor,
+			)
+		}
+		c := pi.EndCursor
+		cursor = &c
 	}
 
 	result := &RepoBulkResult{

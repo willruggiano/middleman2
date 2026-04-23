@@ -1053,15 +1053,25 @@ func (d *DB) GetMRIDByRepoAndNumber(ctx context.Context, owner, name string, num
 
 // GetPreviouslyOpenMRNumbers returns MR numbers that are open in the DB but
 // not in the stillOpen set — i.e. MRs that were closed/merged since the last sync.
+//
+// When updatedSince is non-zero, only MRs whose DB-recorded updated_at is at
+// or after that time are considered. Callers running a windowed sync pass
+// the same cutoff they use for the fetch: PRs outside the window weren't
+// re-queried, so their absence from stillOpen doesn't imply closure.
 func (d *DB) GetPreviouslyOpenMRNumbers(
 	ctx context.Context,
 	repoID int64,
 	stillOpen map[int]bool,
+	updatedSince time.Time,
 ) ([]int, error) {
-	rows, err := d.ro.QueryContext(ctx,
-		`SELECT number FROM middleman_merge_requests WHERE repo_id = ? AND state = 'open'`,
-		repoID,
-	)
+	query := `SELECT number FROM middleman_merge_requests
+	           WHERE repo_id = ? AND state = 'open'`
+	args := []any{repoID}
+	if !updatedSince.IsZero() {
+		query += ` AND updated_at >= ?`
+		args = append(args, updatedSince)
+	}
+	rows, err := d.ro.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get previously open mrs: %w", err)
 	}

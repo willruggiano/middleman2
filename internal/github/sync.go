@@ -142,6 +142,10 @@ type Syncer struct {
 	watchedMRs    []WatchedMR
 	watchMu       sync.Mutex
 	parallelism   atomic.Int32
+	// recentDays caps the sync window to PRs updated in the last N
+	// days. 0 = unlimited (fetch every open PR). Set by main.go at
+	// startup based on SyncRecentDays in the TOML config.
+	recentDays    atomic.Int32
 	running       atomic.Bool
 	status        atomic.Value // stores *SyncStatus
 	stopCh        chan struct{}
@@ -435,6 +439,26 @@ func (s *Syncer) SetParallelism(n int) {
 		n = 1
 	}
 	s.parallelism.Store(int32(n))
+}
+
+// SetRecentDays configures how far back the sync looks for PRs.
+// A positive value means "only sync PRs updated within the last N
+// days"; 0 or negative means unlimited (fetch every open PR).
+func (s *Syncer) SetRecentDays(days int) {
+	if days < 0 {
+		days = 0
+	}
+	s.recentDays.Store(int32(days))
+}
+
+// recentCutoff returns the oldest updated-at time the sync should
+// fetch, or the zero Time if the window is unlimited.
+func (s *Syncer) recentCutoff(now time.Time) time.Time {
+	d := int(s.recentDays.Load())
+	if d <= 0 {
+		return time.Time{}
+	}
+	return now.Add(-time.Duration(d) * 24 * time.Hour)
 }
 
 // SetOnStatusChange registers a callback invoked whenever the
@@ -1312,7 +1336,7 @@ func (s *Syncer) indexSyncRepo(
 					"repo", repo.Owner+"/"+repo.Name,
 				)
 				result, gqlErr := fetcher.FetchRepoPRs(
-					ctx, repo.Owner, repo.Name,
+					ctx, repo.Owner, repo.Name, s.recentCutoff(time.Now()),
 				)
 				slog.Info("indexSyncRepo: GraphQL FetchRepoPRs end",
 					"repo", repo.Owner+"/"+repo.Name,
@@ -1363,7 +1387,7 @@ func (s *Syncer) indexSyncRepo(
 			// Detect closed PRs and fetch final state (1 API call each,
 			// outside budget -- needed for accurate closed state).
 			closedNumbers, err := s.db.GetPreviouslyOpenMRNumbers(
-				ctx, repoID, stillOpen,
+				ctx, repoID, stillOpen, s.recentCutoff(time.Now()),
 			)
 			if err != nil {
 				s.markRepoFailed(repo, failMR)
@@ -1551,9 +1575,12 @@ func (s *Syncer) doSyncRepoGraphQL(
 		}
 	}
 
-	// Detect closed PRs — same as REST path.
+	// Detect closed PRs — same as REST path. Constrained to the
+	// same window we used for the fetch, so PRs outside the
+	// window aren't misread as closed just because we didn't
+	// query them.
 	closedNumbers, err := s.db.GetPreviouslyOpenMRNumbers(
-		ctx, repoID, stillOpen,
+		ctx, repoID, stillOpen, s.recentCutoff(time.Now()),
 	)
 	if err != nil {
 		return fmt.Errorf("get previously open MRs: %w", err)

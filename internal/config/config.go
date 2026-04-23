@@ -25,6 +25,7 @@ const (
 	defaultTimeRange         = "7d"
 	defaultBasePath          = "/"
 	defaultSyncBudgetPerHour = 500
+	defaultSyncRecentDays    = 60
 )
 
 type Repo struct {
@@ -181,10 +182,14 @@ type Config struct {
 	BasePath          string   `toml:"base_path"`
 	DataDir           string   `toml:"data_dir"`
 	SyncBudgetPerHour int      `toml:"sync_budget_per_hour"`
-	Repos             []Repo   `toml:"repos"`
-	Activity          Activity `toml:"activity"`
-	Roborev           Roborev  `toml:"roborev"`
-	Tmux              Tmux     `toml:"tmux"`
+	// SyncRecentDays limits sync to PRs updated in the last N days.
+	// 0 means unlimited (the old "sync everything open" behavior).
+	// Default is 60 — most review-relevant PRs fall inside that.
+	SyncRecentDays int      `toml:"sync_recent_days"`
+	Repos          []Repo   `toml:"repos"`
+	Activity       Activity `toml:"activity"`
+	Roborev        Roborev  `toml:"roborev"`
+	Tmux           Tmux     `toml:"tmux"`
 }
 
 func DefaultConfigPath() string {
@@ -335,6 +340,14 @@ func Load(path string) (*Config, error) {
 
 	if cfg.SyncBudgetPerHour == 0 {
 		cfg.SyncBudgetPerHour = defaultSyncBudgetPerHour
+	}
+
+	// A missing sync_recent_days (zero value) in the config file
+	// could mean "unset, please default" or "explicitly unlimited".
+	// Treat 0 as "default to 60 days"; set a negative value (e.g.
+	// -1) in config to opt into unlimited sync.
+	if cfg.SyncRecentDays == 0 {
+		cfg.SyncRecentDays = defaultSyncRecentDays
 	}
 
 	if cfg.BasePath == "" {

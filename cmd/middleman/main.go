@@ -220,6 +220,7 @@ func run(configPath string) error {
 		)
 	}
 	syncer.SetFetchers(fetchers)
+	syncer.SetRecentDays(cfg.SyncRecentDays)
 
 	assets, err := web.Assets()
 	if err != nil {

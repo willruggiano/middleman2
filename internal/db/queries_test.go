@@ -1033,7 +1033,7 @@ func TestGetPreviouslyOpenPRNumbers(t *testing.T) {
 
 	// PRs 1 and 3 are still open; 2 was closed externally.
 	stillOpen := map[int]bool{1: true, 3: true}
-	closed, err := d.GetPreviouslyOpenMRNumbers(ctx, repoID, stillOpen)
+	closed, err := d.GetPreviouslyOpenMRNumbers(ctx, repoID, stillOpen, time.Time{})
 	require.NoError(t, err)
 	Assert.Equal(t, []int{2}, closed)
 }
