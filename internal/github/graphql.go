@@ -60,9 +60,12 @@ type gqlPR struct {
 	Labels struct {
 		Nodes []gqlLabel
 	} `graphql:"labels(first: 100)"`
-	ReviewRequests struct {
-		Nodes []gqlReviewRequest
-	} `graphql:"reviewRequests(first: 50)"`
+	// TODO: re-enable reviewRequests(first: 50) once the union
+	// handling for RequestedReviewer (User/Team/Mannequin/Bot…)
+	// stops throwing "login doesn't exist in any of N places"
+	// on certain repos. Leaving this off means requested
+	// reviewers aren't populated via sync — the column stays at
+	// its empty-array default.
 	Comments struct {
 		Nodes    []gqlComment
 		PageInfo pageInfo
@@ -87,31 +90,6 @@ type gqlPR struct {
 			}
 		}
 	} `graphql:"lastCommit: commits(last: 1)"`
-}
-
-// gqlReviewRequest captures one outstanding review ask on a PR.
-// The requested reviewer is a GraphQL union — declaring every
-// variant that the API can return is required; shurcooL/graphql
-// fails to unmarshal fields like "login" if no branch claims them.
-type gqlReviewRequest struct {
-	RequestedReviewer struct {
-		User *struct {
-			Login string `graphql:"login"`
-		} `graphql:"... on User"`
-		Team *struct {
-			Slug string `graphql:"slug"`
-		} `graphql:"... on Team"`
-		// Mannequins are ex-contributors or placeholders from
-		// an import; they carry a login like a User.
-		Mannequin *struct {
-			Login string `graphql:"login"`
-		} `graphql:"... on Mannequin"`
-		// Bots (dependabot, renovate, etc.) can be review
-		// requested too and also carry a login.
-		Bot *struct {
-			Login string `graphql:"login"`
-		} `graphql:"... on Bot"`
-	}
 }
 
 type gqlComment struct {
@@ -253,28 +231,9 @@ func adaptPR(gql *gqlPR) *gh.PullRequest {
 			Default:     new(l.IsDefault),
 		})
 	}
-	for _, rr := range gql.ReviewRequests.Nodes {
-		switch {
-		case rr.RequestedReviewer.User != nil:
-			pr.RequestedReviewers = append(pr.RequestedReviewers, &gh.User{
-				Login: new(rr.RequestedReviewer.User.Login),
-			})
-		case rr.RequestedReviewer.Team != nil:
-			pr.RequestedTeams = append(pr.RequestedTeams, &gh.Team{
-				Slug: new(rr.RequestedReviewer.Team.Slug),
-			})
-		case rr.RequestedReviewer.Mannequin != nil:
-			// Mannequins don't fit the User/Team split cleanly.
-			// Treat them as users — the UI just compares logins.
-			pr.RequestedReviewers = append(pr.RequestedReviewers, &gh.User{
-				Login: new(rr.RequestedReviewer.Mannequin.Login),
-			})
-		case rr.RequestedReviewer.Bot != nil:
-			pr.RequestedReviewers = append(pr.RequestedReviewers, &gh.User{
-				Login: new(rr.RequestedReviewer.Bot.Login),
-			})
-		}
-	}
+	// reviewRequests is currently disabled in the GraphQL query
+	// (see gqlPR). Requested reviewers land empty until we
+	// source them another way.
 
 	if gql.HeadRepository != nil {
 		cloneURL := gql.HeadRepository.URL
