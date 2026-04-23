@@ -30,7 +30,14 @@
   }
 
   async function removeThread(): Promise<void> {
-    await aiStore.deleteThread(thread.id);
+    const ok = await aiStore.deleteThread(thread.id);
+    if (!ok) {
+      // deleteThread sets aiStore's errorMsg; surface it in a
+      // quick alert so the reviewer knows the server rejected
+      // the close instead of silently hiding the card.
+      const msg = aiStore.getError() ?? "Close failed";
+      alert(msg);
+    }
   }
 
   async function cancelQuestion(q: AIQuestion): Promise<void> {

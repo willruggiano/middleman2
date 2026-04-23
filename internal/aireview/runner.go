@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wesm/middleman/internal/db"
 	"github.com/wesm/middleman/internal/gitclone"
@@ -233,12 +234,17 @@ func (r *Runner) CloseThread(ctx context.Context, threadID int64) error {
 }
 
 // DeleteThread closes and then removes the thread entirely from the DB.
+// The final DB delete runs on a detached context so a slow worktree
+// removal (or a client disconnect mid-request) can't leave the row
+// orphaned — it's the orphaned row that makes the card "come back"
+// on refresh.
 func (r *Runner) DeleteThread(ctx context.Context, threadID int64) error {
 	if err := r.CloseThread(ctx, threadID); err != nil {
-		// proceed — we still want to remove the row if possible
 		slog.Warn("close thread failed during delete", "thread_id", threadID, "err", err)
 	}
-	return r.db.DeleteAIThread(ctx, threadID)
+	delCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	return r.db.DeleteAIThread(delCtx, threadID)
 }
 
 // --- internals ---

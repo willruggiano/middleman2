@@ -177,13 +177,18 @@ func (d *DB) GetAIThread(ctx context.Context, id int64) (AIThread, error) {
 		   FROM middleman_ai_threads WHERE id = ?`, id))
 }
 
+// ListAIThreadsForMR returns only *active* threads for the given
+// MR. Closed threads linger in the table (we may want them for
+// audit/history) but the review UI treats "closed" as "gone" —
+// otherwise a failed delete would make the card keep reappearing
+// on refresh, which is a worse UX than an orphaned row.
 func (d *DB) ListAIThreadsForMR(ctx context.Context, mrID int64) ([]AIThread, error) {
 	rows, err := d.ro.QueryContext(ctx,
 		`SELECT id, mr_id, path, anchor_side, anchor_line,
 		        hunk_start_line, hunk_end_line, selection_text, commit_sha,
 		        claude_session_id, worktree_path, status, created_at, closed_at
 		   FROM middleman_ai_threads
-		  WHERE mr_id = ?
+		  WHERE mr_id = ? AND status = 'active'
 		  ORDER BY id ASC`, mrID)
 	if err != nil {
 		return nil, fmt.Errorf("list threads: %w", err)
@@ -398,7 +403,7 @@ func (d *DB) ListAIQuestionsForMR(ctx context.Context, mrID int64) ([]AIQuestion
 		        q.status, q.pid, q.created_at, q.started_at, q.completed_at
 		   FROM middleman_ai_questions q
 		   JOIN middleman_ai_threads t ON t.id = q.thread_id
-		  WHERE t.mr_id = ?
+		  WHERE t.mr_id = ? AND t.status = 'active'
 		  ORDER BY q.id ASC`, mrID)
 	if err != nil {
 		return nil, fmt.Errorf("list questions for mr: %w", err)

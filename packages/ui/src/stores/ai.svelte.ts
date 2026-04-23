@@ -19,6 +19,7 @@ export function createAIStore(opts?: AIStoreOptions) {
   let threads = $state<AIThread[]>([]);
   let questions = $state<AIQuestion[]>([]);
   let loading = $state(false);
+  let errorMsg = $state<string | null>(null);
   let pollHandle: ReturnType<typeof setInterval> | null = null;
 
   function prefix(): string {
@@ -133,22 +134,51 @@ export function createAIStore(opts?: AIStoreOptions) {
     }
   }
 
-  async function deleteThread(threadID: number): Promise<void> {
+  async function deleteThread(threadID: number): Promise<boolean> {
+    // Only strip locally when the server actually deleted the row.
+    // Previously we always pruned in a `finally`, which masked
+    // failures — the card disappeared but a refresh pulled it
+    // back in from the server.
     try {
-      await fetch(`${prefix()}/ai-threads/${threadID}`, { method: "DELETE" });
-    } finally {
+      const res = await fetch(`${prefix()}/ai-threads/${threadID}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        errorMsg =
+          (body as Record<string, string>).detail ??
+          (body as Record<string, string>).title ??
+          `Close thread failed: HTTP ${res.status}`;
+        return false;
+      }
       threads = threads.filter((t) => t.id !== threadID);
       questions = questions.filter((q) => q.thread_id !== threadID);
+      return true;
+    } catch (err) {
+      errorMsg = err instanceof Error ? err.message : String(err);
+      return false;
     }
   }
 
-  async function deleteQuestion(threadID: number, questionID: number): Promise<void> {
+  async function deleteQuestion(threadID: number, questionID: number): Promise<boolean> {
     try {
-      await fetch(`${prefix()}/ai-threads/${threadID}/questions/${questionID}`, {
-        method: "DELETE",
-      });
-    } finally {
+      const res = await fetch(
+        `${prefix()}/ai-threads/${threadID}/questions/${questionID}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        errorMsg =
+          (body as Record<string, string>).detail ??
+          (body as Record<string, string>).title ??
+          `Cancel question failed: HTTP ${res.status}`;
+        return false;
+      }
       questions = questions.filter((q) => q.id !== questionID);
+      return true;
+    } catch (err) {
+      errorMsg = err instanceof Error ? err.message : String(err);
+      return false;
     }
   }
 
@@ -192,6 +222,13 @@ export function createAIStore(opts?: AIStoreOptions) {
     questions = [];
   }
 
+  function getError(): string | null {
+    return errorMsg;
+  }
+  function clearError(): void {
+    errorMsg = null;
+  }
+
   return {
     getThreadsForFile,
     getThreadsAtAnchor,
@@ -203,6 +240,8 @@ export function createAIStore(opts?: AIStoreOptions) {
     addFollowUp,
     deleteThread,
     deleteQuestion,
+    getError,
+    clearError,
     start,
     stop,
   };
