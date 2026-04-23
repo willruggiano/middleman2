@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getStores } from "../../context.js";
+  import DiffLineComponent from "./DiffLine.svelte";
 
   interface Props {
     // "top" = collapsed section above the first hunk (known
@@ -9,6 +10,7 @@
     //            fetching downward until the backend returns
     //            an empty slice).
     position?: "top" | "middle" | "bottom";
+    layout?: "unified" | "split";
     lineCount: number;
     // Kept for interface parity; the diff store already knows
     // the current PR so these props aren't used by the fetch.
@@ -26,6 +28,7 @@
 
   const {
     position = "middle",
+    layout = "unified",
     lineCount,
     path,
     sha,
@@ -300,12 +303,36 @@
 
 {#if topLines.length > 0}
   {#each topLines as content, i (i)}
-    <div class="expanded-line">
-      <span class="expanded-gutter">{oldNumForTop(i)}</span>
-      <span class="expanded-gutter">{newNumForTop(i)}</span>
-      <span class="expanded-marker"></span>
-      <pre class="expanded-code">{content}</pre>
-    </div>
+    {#if layout === "split"}
+      <div class="ss-row">
+        <div class="ss-cell ss-cell--left">
+          <DiffLineComponent
+            type="context"
+            {content}
+            oldNum={oldNumForTop(i)}
+            tokens={[{ content }]}
+            splitSide="left"
+          />
+        </div>
+        <div class="ss-cell">
+          <DiffLineComponent
+            type="context"
+            {content}
+            newNum={newNumForTop(i)}
+            tokens={[{ content }]}
+            splitSide="right"
+          />
+        </div>
+      </div>
+    {:else}
+      <DiffLineComponent
+        type="context"
+        {content}
+        oldNum={oldNumForTop(i)}
+        newNum={newNumForTop(i)}
+        tokens={[{ content }]}
+      />
+    {/if}
   {/each}
 {/if}
 
@@ -338,12 +365,36 @@
 
 {#if bottomLines.length > 0}
   {#each bottomLines as content, i (i)}
-    <div class="expanded-line">
-      <span class="expanded-gutter">{oldNumForBottom(i)}</span>
-      <span class="expanded-gutter">{newNumForBottom(i)}</span>
-      <span class="expanded-marker"></span>
-      <pre class="expanded-code">{content}</pre>
-    </div>
+    {#if layout === "split"}
+      <div class="ss-row">
+        <div class="ss-cell ss-cell--left">
+          <DiffLineComponent
+            type="context"
+            {content}
+            oldNum={oldNumForBottom(i)}
+            tokens={[{ content }]}
+            splitSide="left"
+          />
+        </div>
+        <div class="ss-cell">
+          <DiffLineComponent
+            type="context"
+            {content}
+            newNum={newNumForBottom(i)}
+            tokens={[{ content }]}
+            splitSide="right"
+          />
+        </div>
+      </div>
+    {:else}
+      <DiffLineComponent
+        type="context"
+        {content}
+        oldNum={oldNumForBottom(i)}
+        newNum={newNumForBottom(i)}
+        tokens={[{ content }]}
+      />
+    {/if}
   {/each}
 {/if}
 
@@ -412,40 +463,21 @@
     color: var(--accent-red);
   }
 
-  .expanded-line {
-    display: flex;
-    align-items: stretch;
-    line-height: 20px;
-    font-size: 12px;
-    background: var(--diff-bg);
-    color: var(--diff-text);
+  /* Mirrors the split-layout grid in DiffFile so the expanded
+     context rows land in the same columns as the diff hunks
+     above and below. Component-scoped styles don't leak across
+     files, so we repeat the two declarations that matter. */
+  .ss-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 
-  .expanded-gutter {
-    flex-shrink: 0;
-    box-sizing: border-box;
-    width: 50px;
-    padding-right: 10px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--diff-line-num);
-    text-align: right;
-    user-select: none;
-    background: var(--diff-bg);
+  .ss-cell {
+    min-width: 0;
+    overflow-x: auto;
   }
 
-  .expanded-marker {
-    width: 16px;
-    flex-shrink: 0;
-    background: var(--diff-bg);
-  }
-
-  .expanded-code {
-    margin: 0;
-    padding: 0 8px;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    white-space: pre;
-    overflow: visible;
+  .ss-cell--left {
+    border-right: 1px solid var(--diff-border);
   }
 </style>

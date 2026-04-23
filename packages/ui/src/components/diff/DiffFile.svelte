@@ -618,6 +618,7 @@
             {@const firstHunk = renderedFile.hunks[0]}
             <CollapsedRegion
               position="top"
+              {layout}
               lineCount={Math.max(firstHunk.new_start - 1, firstHunk.old_start - 1)}
               path={renderedFile.path}
               sha={currentCommitSha()}
@@ -635,6 +636,7 @@
               {#if gap > 0 && prev}
                 <CollapsedRegion
                   position="middle"
+                  {layout}
                   lineCount={gap}
                   path={renderedFile.path}
                   sha={currentCommitSha()}
@@ -951,6 +953,7 @@
             {@const lastHunk = renderedFile.hunks[renderedFile.hunks.length - 1]!}
             <CollapsedRegion
               position="bottom"
+              {layout}
               lineCount={0}
               path={renderedFile.path}
               sha={currentCommitSha()}
