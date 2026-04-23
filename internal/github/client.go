@@ -863,13 +863,25 @@ func (c *liveClient) CreateReview(
 func (c *liveClient) CreateInlineComment(
 	ctx context.Context, owner, repo string, number int, opts InlineCommentOpts,
 ) (*gh.PullRequestComment, error) {
-	// Replies go through the dedicated replies endpoint, which only
-	// needs a body — GitHub inherits the anchor from the parent
-	// comment. Using it avoids having to re-derive the right
-	// commit_id / path / line / side for a thread whose parent was
-	// made against an older commit.
+	// Replies go through the dedicated replies endpoint
+	// (/pulls/{n}/comments/{comment_id}/replies), which:
+	//   - only needs a body — GitHub inherits the anchor from
+	//     the parent thread;
+	//   - resolves the thread root automatically, so replying
+	//     to a nested reply is accepted.
+	//
+	// go-github's older CreateCommentInReplyTo helper POSTs to
+	// /pulls/{n}/comments with an in_reply_to body field, which
+	// GitHub rejects with "in_reply_to invalid" when the target
+	// isn't itself a top-level review comment. Avoid it.
 	if opts.InReplyTo > 0 {
-		comment, resp, err := c.gh.PullRequests.CreateCommentInReplyTo(ctx, owner, repo, number, opts.Body, opts.InReplyTo)
+		urlStr := fmt.Sprintf("repos/%s/%s/pulls/%d/comments/%d/replies", owner, repo, number, opts.InReplyTo)
+		req, err := c.gh.NewRequest("POST", urlStr, map[string]string{"body": opts.Body})
+		if err != nil {
+			return nil, fmt.Errorf("build reply request for comment %d on %s/%s#%d: %w", opts.InReplyTo, owner, repo, number, err)
+		}
+		comment := new(gh.PullRequestComment)
+		resp, err := c.gh.Do(ctx, req, comment)
 		c.trackRate(resp)
 		if err != nil {
 			return nil, fmt.Errorf("replying to comment %d on %s/%s#%d: %w", opts.InReplyTo, owner, repo, number, err)
