@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getStores } from "../../context.js";
   import DiffLineComponent from "./DiffLine.svelte";
+  import { tokenizeLineDual, type DualToken } from "../../utils/highlight.js";
 
   interface Props {
     // "top" = collapsed section above the first hunk (known
@@ -24,6 +25,9 @@
     // First unchanged line of the gap, 1-based, in old and new files.
     gapOldStart: number;
     gapNewStart: number;
+    // Language for syntax highlighting; undefined falls back to
+    // plain text (DualToken with no color).
+    lang?: string | undefined;
   }
 
   const {
@@ -34,6 +38,7 @@
     sha,
     gapOldStart,
     gapNewStart,
+    lang,
   }: Props = $props();
 
   const STEP = 10;                    // lines per row click
@@ -45,6 +50,11 @@
   let bottomCount = $state(0);
   let topLines = $state<string[]>([]);
   let bottomLines = $state<string[]>([]);
+  // Matching tokens per line; same length as topLines/bottomLines.
+  // When tokenization is in-flight we render with a plain-text
+  // fallback so the line shows immediately.
+  let topTokens = $state<DualToken[][]>([]);
+  let bottomTokens = $state<DualToken[][]>([]);
   let loading = $state(false);
   let errorMsg = $state<string | null>(null);
   // For the "bottom" (end-of-file) region we don't know how many
@@ -82,6 +92,19 @@
     return diffStore.loadBlobRange(path, sha, start, end);
   }
 
+  // Returns a plain-text fallback immediately and fires a
+  // tokenization in the background — Shiki's single-line pass is
+  // fast but still async, and we don't want reveal to block on it.
+  // When unknown lang, don't tokenize at all.
+  function plainTokens(content: string): DualToken[] {
+    return [{ content }];
+  }
+
+  async function tokenizeBatch(contents: string[]): Promise<DualToken[][]> {
+    if (!lang) return contents.map(plainTokens);
+    return Promise.all(contents.map((c) => tokenizeLineDual(c, lang)));
+  }
+
   // expandTop pulls N more lines starting from where the top
   // reveal currently ends. For "bottom" regions this is how we
   // extend the last hunk downward (only one edge to grow).
@@ -95,11 +118,26 @@
     errorMsg = null;
     try {
       const lines = await fetchRange(start, end);
+      // Seed plain-text tokens so the row paints immediately;
+      // the tokenized versions swap in when Shiki finishes.
+      const placeholder = lines.map(plainTokens);
       topLines = [...topLines, ...lines];
+      topTokens = [...topTokens, ...placeholder];
+      const baseIdx = topCount;
       topCount += lines.length;
       if (position === "bottom" && lines.length < take) {
         bottomExhausted = true;
       }
+      void tokenizeBatch(lines).then((tokens) => {
+        // Splice tokenized results into the same slots we seeded.
+        // Use a local copy to avoid the case where another reveal
+        // raced in between.
+        const copy = [...topTokens];
+        for (let i = 0; i < tokens.length; i++) {
+          if (copy[baseIdx + i]) copy[baseIdx + i] = tokens[i]!;
+        }
+        topTokens = copy;
+      });
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : String(err);
     } finally {
@@ -120,8 +158,19 @@
     errorMsg = null;
     try {
       const lines = await fetchRange(start, end);
+      const placeholder = lines.map(plainTokens);
       bottomLines = [...lines, ...bottomLines];
+      bottomTokens = [...placeholder, ...bottomTokens];
       bottomCount += lines.length;
+      void tokenizeBatch(lines).then((tokens) => {
+        // Tokens align with the lines we just prepended, so they
+        // sit at the front of the current array.
+        const copy = [...bottomTokens];
+        for (let i = 0; i < tokens.length; i++) {
+          if (copy[i]) copy[i] = tokens[i]!;
+        }
+        bottomTokens = copy;
+      });
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : String(err);
     } finally {
@@ -182,9 +231,19 @@
         errorMsg = null;
         try {
           const lines = await fetchRange(start, end);
+          const placeholder = lines.map(plainTokens);
+          const baseIdx = topCount;
           topLines = [...topLines, ...lines];
+          topTokens = [...topTokens, ...placeholder];
           topCount += lines.length;
           if (lines.length < CHUNK) bottomExhausted = true;
+          void tokenizeBatch(lines).then((tokens) => {
+            const copy = [...topTokens];
+            for (let i = 0; i < tokens.length; i++) {
+              if (copy[baseIdx + i]) copy[baseIdx + i] = tokens[i]!;
+            }
+            topTokens = copy;
+          });
         } catch (err) {
           errorMsg = err instanceof Error ? err.message : String(err);
           break;
@@ -203,8 +262,18 @@
       const lines = await fetchRange(start, end);
       // Append the whole middle to the top side so ordering
       // stays stable (top reveals + middle + bottom reveals).
+      const placeholder = lines.map(plainTokens);
+      const baseIdx = topCount;
       topLines = [...topLines, ...lines];
+      topTokens = [...topTokens, ...placeholder];
       topCount += lines.length;
+      void tokenizeBatch(lines).then((tokens) => {
+        const copy = [...topTokens];
+        for (let i = 0; i < tokens.length; i++) {
+          if (copy[baseIdx + i]) copy[baseIdx + i] = tokens[i]!;
+        }
+        topTokens = copy;
+      });
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : String(err);
     } finally {
@@ -349,6 +418,7 @@
 
 {#if topLines.length > 0}
   {#each topLines as content, i (i)}
+    {@const tokens = topTokens[i] ?? [{ content }]}
     {#if layout === "split"}
       <div class="ss-row">
         <div class="ss-cell ss-cell--left">
@@ -356,7 +426,7 @@
             type="context"
             {content}
             oldNum={oldNumForTop(i)}
-            tokens={[{ content }]}
+            {tokens}
             splitSide="left"
           />
         </div>
@@ -365,7 +435,7 @@
             type="context"
             {content}
             newNum={newNumForTop(i)}
-            tokens={[{ content }]}
+            {tokens}
             splitSide="right"
           />
         </div>
@@ -376,7 +446,7 @@
         {content}
         oldNum={oldNumForTop(i)}
         newNum={newNumForTop(i)}
-        tokens={[{ content }]}
+        {tokens}
       />
     {/if}
   {/each}
@@ -411,6 +481,7 @@
 
 {#if bottomLines.length > 0}
   {#each bottomLines as content, i (i)}
+    {@const tokens = bottomTokens[i] ?? [{ content }]}
     {#if layout === "split"}
       <div class="ss-row">
         <div class="ss-cell ss-cell--left">
@@ -418,7 +489,7 @@
             type="context"
             {content}
             oldNum={oldNumForBottom(i)}
-            tokens={[{ content }]}
+            {tokens}
             splitSide="left"
           />
         </div>
@@ -427,7 +498,7 @@
             type="context"
             {content}
             newNum={newNumForBottom(i)}
-            tokens={[{ content }]}
+            {tokens}
             splitSide="right"
           />
         </div>
@@ -438,7 +509,7 @@
         {content}
         oldNum={oldNumForBottom(i)}
         newNum={newNumForBottom(i)}
-        tokens={[{ content }]}
+        {tokens}
       />
     {/if}
   {/each}

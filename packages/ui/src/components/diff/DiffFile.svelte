@@ -619,6 +619,7 @@
             <CollapsedRegion
               position="top"
               {layout}
+              {lang}
               lineCount={Math.max(firstHunk.new_start - 1, firstHunk.old_start - 1)}
               path={renderedFile.path}
               sha={currentCommitSha()}
@@ -954,6 +955,7 @@
             <CollapsedRegion
               position="bottom"
               {layout}
+              {lang}
               lineCount={0}
               path={renderedFile.path}
               sha={currentCommitSha()}
