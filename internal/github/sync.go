@@ -17,6 +17,11 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// strPtr returns a pointer to s. Cheap local helper so we can
+// construct gh.User / gh.Team literals without a named variable
+// per field.
+func strPtr(s string) *string { return &s }
+
 // SyncStatus holds the current state of the sync engine.
 type SyncStatus struct {
 	Running     bool      `json:"running"`
@@ -1348,6 +1353,45 @@ func (s *Syncer) indexSyncRepo(
 						"err", gqlErr,
 					)
 				} else {
+					// Enrich GraphQL result with requested-reviewer
+					// data from the REST list: our GraphQL query
+					// intentionally omits reviewRequests (the union
+					// variants gave shurcooL/graphql fits), so the
+					// GraphQL path would otherwise clear the
+					// requested_reviewers column on every sync. REST
+					// already carries requested_reviewers_json per PR;
+					// splice it in by number.
+					reviewersByNumber := make(map[int][]string, len(ghPRs))
+					teamsByNumber := make(map[int][]string, len(ghPRs))
+					for _, ghPR := range ghPRs {
+						n := ghPR.GetNumber()
+						for _, u := range ghPR.RequestedReviewers {
+							if login := u.GetLogin(); login != "" {
+								reviewersByNumber[n] = append(reviewersByNumber[n], login)
+							}
+						}
+						for _, t := range ghPR.RequestedTeams {
+							if slug := t.GetSlug(); slug != "" {
+								teamsByNumber[n] = append(teamsByNumber[n], slug)
+							}
+						}
+					}
+					for i := range result.PullRequests {
+						bulk := &result.PullRequests[i]
+						n := bulk.PR.GetNumber()
+						for _, login := range reviewersByNumber[n] {
+							bulk.PR.RequestedReviewers = append(
+								bulk.PR.RequestedReviewers,
+								&gh.User{Login: strPtr(login)},
+							)
+						}
+						for _, slug := range teamsByNumber[n] {
+							bulk.PR.RequestedTeams = append(
+								bulk.PR.RequestedTeams,
+								&gh.Team{Slug: strPtr(slug)},
+							)
+						}
+					}
 					slog.Info("indexSyncRepo: doSyncRepoGraphQL begin",
 						"repo", repo.Owner+"/"+repo.Name,
 					)
