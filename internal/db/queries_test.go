@@ -1090,6 +1090,27 @@ func TestResolveReviewCommentRootID(t *testing.T) {
 	root, err = d.ResolveReviewCommentRootID(ctx, mrID, 999)
 	require.NoError(err)
 	assert.Equal(int64(999), root)
+
+	// An id matching a local event row (not a platform id) gets
+	// translated to the platform id first, then walked. Older
+	// drafts carried the row id from a frontend bug, so the
+	// resolver shims them in.
+	var localIDForRow102 int64
+	require.NoError(d.ro.QueryRowContext(ctx,
+		`SELECT id FROM middleman_mr_events
+		  WHERE merge_request_id = ? AND platform_id = ?`,
+		mrID, int64(102),
+	).Scan(&localIDForRow102))
+	require.NotZero(localIDForRow102)
+	// The row id must not collide with any known platform id to
+	// prove the translation is taking the right branch.
+	assert.NotEqual(int64(100), localIDForRow102)
+	assert.NotEqual(int64(101), localIDForRow102)
+	assert.NotEqual(int64(102), localIDForRow102)
+
+	root, err = d.ResolveReviewCommentRootID(ctx, mrID, localIDForRow102)
+	require.NoError(err)
+	assert.Equal(int64(100), root)
 }
 
 func TestUpsertPullRequestMergeableState(t *testing.T) {

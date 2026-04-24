@@ -955,6 +955,12 @@ func (d *DB) UpsertMREvents(ctx context.Context, events []MREvent) error {
 //   - we have no record of the comment, OR
 //   - the comment is already a thread root (in_reply_to unset or 0).
 //
+// If `commentID` doesn't match any review_comment's platform_id but
+// does match an event.id (our internal autoincrement — what an older
+// frontend bug stored in drafts), the method translates it to the
+// corresponding platform_id and then walks normally. Without this
+// compatibility shim, pre-fix drafts kept 404'ing on publish.
+//
 // Used by the submit-review path: GitHub's dedicated
 // /pulls/{n}/comments/{id}/replies endpoint 404s unless `id` is a
 // thread root, so we have to resolve it before posting.
@@ -962,6 +968,12 @@ func (d *DB) ResolveReviewCommentRootID(
 	ctx context.Context, mrID, commentID int64,
 ) (int64, error) {
 	current := commentID
+	// If commentID matches a local row id (not a GitHub platform
+	// id), translate up-front. Drafts created before the frontend
+	// bug was fixed stored event.ID instead of event.PlatformID.
+	if translated, ok := d.translateLocalEventIDToPlatformID(ctx, mrID, current); ok {
+		current = translated
+	}
 	// Bounded walk — GitHub threads are rarely more than a handful
 	// deep. Cap at 32 to prevent a malformed cycle from spinning.
 	for i := 0; i < 32; i++ {
@@ -993,6 +1005,42 @@ func (d *DB) ResolveReviewCommentRootID(
 		current = meta.InReplyTo
 	}
 	return current, nil
+}
+
+// translateLocalEventIDToPlatformID returns the platform_id of the
+// review_comment event whose local id matches `id`. Only returns ok
+// when:
+//   - the id matches an event.id on this MR, AND
+//   - that event is of type review_comment with a non-null platform_id, AND
+//   - no *other* review_comment event on this MR has its platform_id
+//     equal to `id` (ambiguous).
+//
+// The last check prevents accidental translation when `id` is both a
+// valid platform_id AND some other event's local id, which shouldn't
+// happen in practice but is cheap to guard against.
+func (d *DB) translateLocalEventIDToPlatformID(
+	ctx context.Context, mrID, id int64,
+) (int64, bool) {
+	var platformConflict int
+	if err := d.ro.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM middleman_mr_events
+		  WHERE merge_request_id = ? AND event_type = 'review_comment'
+		        AND platform_id = ?`,
+		mrID, id,
+	).Scan(&platformConflict); err != nil || platformConflict > 0 {
+		return 0, false
+	}
+	var platformID sql.NullInt64
+	err := d.ro.QueryRowContext(ctx,
+		`SELECT platform_id FROM middleman_mr_events
+		  WHERE id = ? AND merge_request_id = ? AND event_type = 'review_comment'
+		  LIMIT 1`,
+		id, mrID,
+	).Scan(&platformID)
+	if err != nil || !platformID.Valid || platformID.Int64 <= 0 {
+		return 0, false
+	}
+	return platformID.Int64, true
 }
 
 // ListMREvents returns all events for a merge request ordered by created_at DESC.
