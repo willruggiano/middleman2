@@ -69,32 +69,29 @@
     // event-based subscribeSyncComplete instead, and debounce it
     // so a flapping sync (e.g. rapid fail/retry) can't still
     // swamp /pulls.
-    // eslint-disable-next-line no-console
-    console.debug("[PullList] effect mount");
+    // Refresh sources, lowest → highest priority:
+    //   - 60s safety-net poll (was 15s; with SSE + sync-complete
+    //     wired up, the aggressive cadence was redundant and made
+    //     the console look like the app was hammering the server).
+    //   - sync.subscribeSyncComplete fires within seconds of a
+    //     server sync finishing; debounced 2s so a flapping sync
+    //     doesn't fire per retry.
     void pulls.loadPulls();
 
     refreshHandle = setInterval(() => {
-      // eslint-disable-next-line no-console
-      console.debug("[PullList] 15s interval tick");
       void pulls.loadPulls();
-    }, 15_000);
+    }, 60_000);
 
     let syncDebounce: ReturnType<typeof setTimeout> | null = null;
     const unsub = sync.subscribeSyncComplete(() => {
-      // eslint-disable-next-line no-console
-      console.debug("[PullList] sync-complete event (debouncing)");
       if (syncDebounce !== null) clearTimeout(syncDebounce);
       syncDebounce = setTimeout(() => {
         syncDebounce = null;
-        // eslint-disable-next-line no-console
-        console.debug("[PullList] sync-complete debounce fired");
         void pulls.loadPulls();
       }, 2_000);
     });
 
     return () => {
-      // eslint-disable-next-line no-console
-      console.debug("[PullList] effect teardown");
       if (refreshHandle !== null) clearInterval(refreshHandle);
       if (syncDebounce !== null) clearTimeout(syncDebounce);
       unsub();

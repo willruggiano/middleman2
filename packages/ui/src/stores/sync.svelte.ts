@@ -60,14 +60,6 @@ export function createSyncStore(opts: SyncStoreOptions) {
 
     const isRunning = status?.running ?? false;
 
-    if (wasRunning !== isRunning) {
-      // eslint-disable-next-line no-console
-      console.debug(
-        `[sync] running ${wasRunning} -> ${isRunning}; interval=${currentIntervalMs}ms ` +
-          `last_error=${status?.last_error ?? ""}`,
-      );
-    }
-
     if (wasRunning && !isRunning) {
       if (onSyncCompleteOnce) {
         const cb = onSyncCompleteOnce;
