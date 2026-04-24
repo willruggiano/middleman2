@@ -384,6 +384,11 @@ export function createPullsStore(opts: PullsStoreOptions) {
           detail_loaded: data.detail_loaded,
           detail_fetched_at: data.detail_fetched_at,
           worktree_links: data.worktree_links,
+          // PR-detail endpoint doesn't surface reviewer_logins
+          // (it only carries the live events array); default to
+          // empty so the list-shaped PullRequest type is
+          // satisfied. The list endpoint supplies the real value.
+          reviewer_logins: [],
         } as PullRequest,
       };
     } catch (err) {

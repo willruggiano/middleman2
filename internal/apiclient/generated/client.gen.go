@@ -633,6 +633,7 @@ type MergeRequestResponse struct {
 	RepoName           string                  `json:"repo_name"`
 	RepoOwner          string                  `json:"repo_owner"`
 	RequestedReviewers *[]string               `json:"requested_reviewers"`
+	ReviewerLogins     *[]string               `json:"reviewer_logins"`
 	WorktreeLinks      *[]WorktreeLinkResponse `json:"worktree_links"`
 }
 

@@ -10,18 +10,23 @@
 
   // True when the viewer is on the PR's requested-reviewers list.
   // `requested_reviewers` is flat: individual logins + "team:<slug>"
-  // for team asks. We ignore team asks here since there's no
-  // cheap way to know whether the viewer is in the team; the UI
-  // will light up as soon as the individual assignment is added.
+  // for team asks. We ignore team asks since there's no cheap way
+  // to know whether the viewer is in the team.
+  //
+  // Once the viewer submits a review GitHub removes them from
+  // requested_reviewers, so also consider `reviewer_logins` — the
+  // distinct set of logins that have reviewed this PR. Either
+  // relationship means "this PR is in my review queue".
   const awaitingMyReview = $derived.by<boolean>(() => {
     const login = viewer.getLogin();
     if (!login) return false;
-    const reviewers = pr.requested_reviewers ?? [];
-    if (reviewers.length === 0) return false;
     const needle = login.toLowerCase();
-    for (const r of reviewers) {
+    for (const r of pr.requested_reviewers ?? []) {
       if (!r || r.startsWith("team:")) continue;
       if (r.toLowerCase() === needle) return true;
+    }
+    for (const r of pr.reviewer_logins ?? []) {
+      if (r && r.toLowerCase() === needle) return true;
     }
     return false;
   });

@@ -1146,6 +1146,58 @@ func (d *DB) GetMRIDByRepoAndNumber(ctx context.Context, owner, name string, num
 	return id, nil
 }
 
+// ReviewAuthorsForMRs returns, for each given merge-request id, the set of
+// distinct GitHub logins that have submitted a review event. Used by the
+// PR list to surface "reviewed by" state — on the UI side, a PR where the
+// viewer is either a requested reviewer *or* has already reviewed shows
+// the "review" chip, matching a reviewer's mental queue.
+//
+// Blank and missing authors are skipped. Returns a map keyed by mr id with
+// nil slices for ids that have no review events.
+func (d *DB) ReviewAuthorsForMRs(
+	ctx context.Context, mrIDs []int64,
+) (map[int64][]string, error) {
+	out := make(map[int64][]string, len(mrIDs))
+	if len(mrIDs) == 0 {
+		return out, nil
+	}
+	placeholders := sqlPlaceholders(len(mrIDs))
+	args := make([]any, 0, len(mrIDs))
+	for _, id := range mrIDs {
+		args = append(args, id)
+	}
+	rows, err := d.ro.QueryContext(ctx, fmt.Sprintf(
+		`SELECT merge_request_id, author
+		   FROM middleman_mr_events
+		  WHERE event_type = 'review'
+		        AND author != ''
+		        AND merge_request_id IN (%s)`, placeholders,
+	), args...)
+	if err != nil {
+		return nil, fmt.Errorf("list review authors: %w", err)
+	}
+	defer rows.Close()
+	seen := make(map[int64]map[string]struct{}, len(mrIDs))
+	for rows.Next() {
+		var mrID int64
+		var author string
+		if err := rows.Scan(&mrID, &author); err != nil {
+			return nil, fmt.Errorf("scan review author: %w", err)
+		}
+		bucket, ok := seen[mrID]
+		if !ok {
+			bucket = make(map[string]struct{})
+			seen[mrID] = bucket
+		}
+		if _, dup := bucket[author]; dup {
+			continue
+		}
+		bucket[author] = struct{}{}
+		out[mrID] = append(out[mrID], author)
+	}
+	return out, rows.Err()
+}
+
 // GetPreviouslyOpenMRNumbers returns MR numbers that are open in the DB but
 // not in the stillOpen set — i.e. MRs that were closed/merged since the last sync.
 //

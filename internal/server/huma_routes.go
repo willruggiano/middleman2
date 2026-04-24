@@ -516,6 +516,11 @@ func (s *Server) listPulls(ctx context.Context, input *listPullsInput) (*listPul
 	}
 	linksByMR := indexWorktreeLinksByMR(links)
 
+	reviewersByMR, raErr := s.db.ReviewAuthorsForMRs(ctx, mrIDs)
+	if raErr != nil {
+		return nil, huma.Error500InternalServerError("load review authors failed")
+	}
+
 	out := make([]mergeRequestResponse, 0, len(mrs))
 	for _, mr := range mrs {
 		rp, ok := repoByID[mr.RepoID]
@@ -526,13 +531,18 @@ func (s *Server) listPulls(ctx context.Context, input *listPullsInput) (*listPul
 		if wl == nil {
 			wl = []worktreeLinkResponse{}
 		}
+		reviewers := reviewersByMR[mr.ID]
+		if reviewers == nil {
+			reviewers = []string{}
+		}
 		resp := mergeRequestResponse{
-			MergeRequest:  mr,
-			RepoOwner:     rp.Owner,
-			RepoName:      rp.Name,
-			PlatformHost:  rp.PlatformHost,
-			WorktreeLinks: wl,
-			DetailLoaded:  mr.DetailFetchedAt != nil,
+			MergeRequest:   mr,
+			RepoOwner:      rp.Owner,
+			RepoName:       rp.Name,
+			PlatformHost:   rp.PlatformHost,
+			WorktreeLinks:  wl,
+			DetailLoaded:   mr.DetailFetchedAt != nil,
+			ReviewerLogins: reviewers,
 		}
 		if mr.DetailFetchedAt != nil {
 			resp.DetailFetchedAt = formatUTCRFC3339(*mr.DetailFetchedAt)

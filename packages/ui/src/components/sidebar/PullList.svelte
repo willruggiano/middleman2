@@ -9,23 +9,32 @@
   // list. These sort to the top of the PR list (and within each
   // group for the grouped views) so the reviewer sees their queue
   // first.
-  function awaitsMyReview(pr: { requested_reviewers?: string[] | null }): boolean {
+  function awaitsMyReview(
+    pr: { requested_reviewers?: string[] | null; reviewer_logins?: string[] | null },
+  ): boolean {
     const login = viewer.getLogin();
     if (!login) return false;
-    const reviewers = pr.requested_reviewers ?? [];
-    if (!reviewers || reviewers.length === 0) return false;
     const needle = login.toLowerCase();
-    for (const r of reviewers) {
+    for (const r of pr.requested_reviewers ?? []) {
       if (!r || r.startsWith("team:")) continue;
       if (r.toLowerCase() === needle) return true;
+    }
+    for (const r of pr.reviewer_logins ?? []) {
+      if (r && r.toLowerCase() === needle) return true;
     }
     return false;
   }
 
   // Stable sort: items where the viewer is a requested reviewer
-  // come first, existing relative order preserved (the source
-  // list is already sorted by last_activity_at DESC server-side).
-  function sortReviewFirst<T extends { requested_reviewers?: string[] | null }>(list: T[]): T[] {
+  // (or has already reviewed) come first, existing relative order
+  // preserved (the source list is already sorted by
+  // last_activity_at DESC server-side).
+  function sortReviewFirst<
+    T extends {
+      requested_reviewers?: string[] | null;
+      reviewer_logins?: string[] | null;
+    },
+  >(list: T[]): T[] {
     return list
       .map((item, i) => ({ item, i, prio: awaitsMyReview(item) ? 0 : 1 }))
       .sort((a, b) => a.prio - b.prio || a.i - b.i)

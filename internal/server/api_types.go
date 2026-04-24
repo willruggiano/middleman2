@@ -22,6 +22,12 @@ type mergeRequestResponse struct {
 	WorktreeLinks   []worktreeLinkResponse `json:"worktree_links"`
 	DetailLoaded    bool                   `json:"detail_loaded"`
 	DetailFetchedAt string                 `json:"detail_fetched_at,omitempty"`
+	// ReviewerLogins are distinct GitHub logins that have submitted at
+	// least one review on this PR. GitHub removes a reviewer from
+	// requested_reviewers once they submit a review, so this field
+	// keeps the "already reviewed" set around for the UI's "in my
+	// review queue" chip.
+	ReviewerLogins []string `json:"reviewer_logins"`
 }
 
 type workflowApprovalResponse struct {
