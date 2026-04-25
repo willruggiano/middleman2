@@ -415,6 +415,7 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Get(api, "/ai/sessions", s.getAISessions)
 	huma.Get(api, "/rate-limits", s.getRateLimits)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/commits", s.getCommits)
+	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/patchsets", s.listPatchsets)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/diff", s.getDiff)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/files", s.getFiles)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/blob-range", s.getBlobRange)
@@ -2154,6 +2155,40 @@ func (s *Server) getBlobRange(ctx context.Context, input *getBlobRangeInput) (*g
 		return nil, huma.Error502BadGateway("read blob: " + err.Error())
 	}
 	return &getBlobRangeOutput{Body: blobRangeResponse{Lines: lines}}, nil
+}
+
+// --- Patchsets ---
+
+type listPatchsetsOutput struct {
+	Body patchsetsResponse
+}
+
+// listPatchsets returns every patchset (distinct head SHA observed by
+// sync) for the given PR in oldest-first order. Used by the review
+// surface to render the Gerrit-style PS chip strip.
+func (s *Server) listPatchsets(ctx context.Context, input *repoNumberInput) (*listPatchsetsOutput, error) {
+	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{
+		owner: input.Owner, name: input.Name, number: input.Number,
+	})
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	rows, err := s.db.ListPatchsets(ctx, mrID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("list patchsets: " + err.Error())
+	}
+	out := patchsetsResponse{Patchsets: make([]patchsetResponse, 0, len(rows))}
+	for _, p := range rows {
+		out.Patchsets = append(out.Patchsets, patchsetResponse{
+			ID:           p.ID,
+			Number:       p.Number,
+			HeadSHA:      p.HeadSHA,
+			BaseSHA:      p.BaseSHA,
+			MergeBaseSHA: p.MergeBaseSHA,
+			ObservedAt:   p.ObservedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return &listPatchsetsOutput{Body: out}, nil
 }
 
 // --- PR scratchpad notes ---

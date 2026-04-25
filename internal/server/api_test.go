@@ -5131,6 +5131,63 @@ func TestAPICreateAIThread_Validation(t *testing.T) {
 	Assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
 }
 
+func TestAPIListPatchsets(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	mrID := seedPR(t, database, "acme", "widget", 1)
+
+	// Empty initial state — no patchsets yet.
+	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberPatchsetsWithResponse(
+		ctx, "acme", "widget", 1,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200)
+	require.NotNil(resp.JSON200.Patchsets)
+	assert.Empty(*resp.JSON200.Patchsets)
+
+	// Record three patchsets directly so the test doesn't depend
+	// on sync wiring; the endpoint just queries db.ListPatchsets.
+	for i, sha := range []string{"aaaaaaa", "bbbbbbb", "ccccccc"} {
+		_, _, err := database.RecordPatchset(ctx, mrID, db.RecordPatchsetOpts{
+			HeadSHA:      sha,
+			BaseSHA:      "main-base-" + sha,
+			MergeBaseSHA: "mb-" + sha,
+		})
+		require.NoError(err, "record patchset %d", i+1)
+	}
+
+	resp, err = client.HTTP.GetReposByOwnerByNamePullsByNumberPatchsetsWithResponse(
+		ctx, "acme", "widget", 1,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, resp.StatusCode())
+	require.NotNil(resp.JSON200.Patchsets)
+	patchsets := *resp.JSON200.Patchsets
+	require.Len(patchsets, 3)
+	// Oldest-first ordering, monotonic numbering starting at 1.
+	assert.Equal(int64(1), patchsets[0].Number)
+	assert.Equal("aaaaaaa", patchsets[0].HeadSha)
+	assert.Equal(int64(2), patchsets[1].Number)
+	assert.Equal("bbbbbbb", patchsets[1].HeadSha)
+	assert.Equal(int64(3), patchsets[2].Number)
+	assert.Equal("ccccccc", patchsets[2].HeadSha)
+}
+
+func TestAPIListPatchsets_NotFound(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	resp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberPatchsetsWithResponse(
+		context.Background(), "acme", "widget", 999,
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode())
+}
+
 func TestAPIGetCommits(t *testing.T) {
 	require := require.New(t)
 	assert := Assert.New(t)

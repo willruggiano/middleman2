@@ -650,6 +650,27 @@ type MrImportMetadataResponse struct {
 	Title            string  `json:"title"`
 }
 
+// PatchsetResponse defines model for PatchsetResponse.
+type PatchsetResponse struct {
+	BaseSha      *string `json:"base_sha,omitempty"`
+	HeadSha      string  `json:"head_sha"`
+	Id           int64   `json:"id"`
+	MergeBaseSha *string `json:"merge_base_sha,omitempty"`
+
+	// Number Sequential PSn label, 1-based per PR
+	Number int64 `json:"number"`
+
+	// ObservedAt UTC RFC3339 timestamp of when sync first saw this head
+	ObservedAt string `json:"observed_at"`
+}
+
+// PatchsetsResponse defines model for PatchsetsResponse.
+type PatchsetsResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema    *string             `json:"$schema,omitempty"`
+	Patchsets *[]PatchsetResponse `json:"patchsets"`
+}
+
 // PostCommentInputBody defines model for PostCommentInputBody.
 type PostCommentInputBody struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -1272,6 +1293,9 @@ type ClientInterface interface {
 	PutReposByOwnerByNamePullsByNumberNotesWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	PutReposByOwnerByNamePullsByNumberNotes(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReposByOwnerByNamePullsByNumberPatchsets request
+	GetReposByOwnerByNamePullsByNumberPatchsets(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostReposByOwnerByNamePullsByNumberReadyForReview request
 	PostReposByOwnerByNamePullsByNumberReadyForReview(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1964,6 +1988,18 @@ func (c *Client) PutReposByOwnerByNamePullsByNumberNotesWithBody(ctx context.Con
 
 func (c *Client) PutReposByOwnerByNamePullsByNumberNotes(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPutReposByOwnerByNamePullsByNumberNotesRequest(c.Server, owner, name, number, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReposByOwnerByNamePullsByNumberPatchsets(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReposByOwnerByNamePullsByNumberPatchsetsRequest(c.Server, owner, name, number)
 	if err != nil {
 		return nil, err
 	}
@@ -4665,6 +4701,54 @@ func NewPutReposByOwnerByNamePullsByNumberNotesRequestWithBody(server string, ow
 	return req, nil
 }
 
+// NewGetReposByOwnerByNamePullsByNumberPatchsetsRequest generates requests for GetReposByOwnerByNamePullsByNumberPatchsets
+func NewGetReposByOwnerByNamePullsByNumberPatchsetsRequest(server string, owner string, name string, number int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/patchsets", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewPostReposByOwnerByNamePullsByNumberReadyForReviewRequest generates requests for PostReposByOwnerByNamePullsByNumberReadyForReview
 func NewPostReposByOwnerByNamePullsByNumberReadyForReviewRequest(server string, owner string, name string, number int64) (*http.Request, error) {
 	var err error
@@ -5462,6 +5546,9 @@ type ClientWithResponsesInterface interface {
 	PutReposByOwnerByNamePullsByNumberNotesWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberNotesResponse, error)
 
 	PutReposByOwnerByNamePullsByNumberNotesWithResponse(ctx context.Context, owner string, name string, number int64, body PutReposByOwnerByNamePullsByNumberNotesJSONRequestBody, reqEditors ...RequestEditorFn) (*PutReposByOwnerByNamePullsByNumberNotesResponse, error)
+
+	// GetReposByOwnerByNamePullsByNumberPatchsetsWithResponse request
+	GetReposByOwnerByNamePullsByNumberPatchsetsWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberPatchsetsResponse, error)
 
 	// PostReposByOwnerByNamePullsByNumberReadyForReviewWithResponse request
 	PostReposByOwnerByNamePullsByNumberReadyForReviewWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberReadyForReviewResponse, error)
@@ -6455,6 +6542,29 @@ func (r PutReposByOwnerByNamePullsByNumberNotesResponse) StatusCode() int {
 	return 0
 }
 
+type GetReposByOwnerByNamePullsByNumberPatchsetsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *PatchsetsResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReposByOwnerByNamePullsByNumberPatchsetsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReposByOwnerByNamePullsByNumberPatchsetsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type PostReposByOwnerByNamePullsByNumberReadyForReviewResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
@@ -7243,6 +7353,15 @@ func (c *ClientWithResponses) PutReposByOwnerByNamePullsByNumberNotesWithRespons
 		return nil, err
 	}
 	return ParsePutReposByOwnerByNamePullsByNumberNotesResponse(rsp)
+}
+
+// GetReposByOwnerByNamePullsByNumberPatchsetsWithResponse request returning *GetReposByOwnerByNamePullsByNumberPatchsetsResponse
+func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberPatchsetsWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberPatchsetsResponse, error) {
+	rsp, err := c.GetReposByOwnerByNamePullsByNumberPatchsets(ctx, owner, name, number, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReposByOwnerByNamePullsByNumberPatchsetsResponse(rsp)
 }
 
 // PostReposByOwnerByNamePullsByNumberReadyForReviewWithResponse request returning *PostReposByOwnerByNamePullsByNumberReadyForReviewResponse
@@ -8719,6 +8838,39 @@ func ParsePutReposByOwnerByNamePullsByNumberNotesResponse(rsp *http.Response) (*
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest PrNotesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReposByOwnerByNamePullsByNumberPatchsetsResponse parses an HTTP response from a GetReposByOwnerByNamePullsByNumberPatchsetsWithResponse call
+func ParseGetReposByOwnerByNamePullsByNumberPatchsetsResponse(rsp *http.Response) (*GetReposByOwnerByNamePullsByNumberPatchsetsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReposByOwnerByNamePullsByNumberPatchsetsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PatchsetsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

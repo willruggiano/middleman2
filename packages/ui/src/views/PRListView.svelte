@@ -11,6 +11,7 @@
   import ReviewCoverBanner from "../components/detail/ReviewCoverBanner.svelte";
   import ReviewBriefCard from "../components/detail/ReviewBriefCard.svelte";
   import PRNotesPanel from "../components/detail/PRNotesPanel.svelte";
+  import PatchsetPicker from "../components/diff/PatchsetPicker.svelte";
   import StackSidebar
     from "../components/detail/StackSidebar.svelte";
 
@@ -118,6 +119,7 @@
                 name={selectedPR.name}
               />
             {/if}
+            <PatchsetPicker />
             <ReviewBriefCard
               owner={selectedPR.owner}
               name={selectedPR.name}

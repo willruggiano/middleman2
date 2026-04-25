@@ -564,6 +564,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/patchsets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number patchsets */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-patchsets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/ready-for-review": {
         parameters: {
             query?: never;
@@ -1517,6 +1534,29 @@ export interface components {
             platform_head_sha: string;
             state: string;
             title: string;
+        };
+        PatchsetResponse: {
+            base_sha?: string;
+            head_sha: string;
+            /** Format: int64 */
+            id: number;
+            merge_base_sha?: string;
+            /**
+             * Format: int64
+             * @description Sequential PSn label, 1-based per PR
+             */
+            number: number;
+            /** @description UTC RFC3339 timestamp of when sync first saw this head */
+            observed_at: string;
+        };
+        PatchsetsResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/PatchsetsResponse.json
+             */
+            readonly $schema?: string;
+            patchsets: components["schemas"]["PatchsetResponse"][] | null;
         };
         PostCommentInputBody: {
             /**
@@ -3234,6 +3274,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PrNotesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-patchsets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PatchsetsResponse"];
                 };
             };
             /** @description Error */

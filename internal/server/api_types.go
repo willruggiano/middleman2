@@ -164,6 +164,22 @@ type authorGroupsResponse struct {
 	Groups []authorGroupResponse `json:"groups"`
 }
 
+// patchsetResponse is the wire shape for one observed PR head
+// SHA. The UI uses these as Gerrit-style "PSn" chips so a
+// reviewer can compare any two pushes against each other.
+type patchsetResponse struct {
+	ID           int64  `json:"id"`
+	Number       int    `json:"number"      doc:"Sequential PSn label, 1-based per PR"`
+	HeadSHA      string `json:"head_sha"`
+	BaseSHA      string `json:"base_sha,omitempty"`
+	MergeBaseSHA string `json:"merge_base_sha,omitempty"`
+	ObservedAt   string `json:"observed_at" doc:"UTC RFC3339 timestamp of when sync first saw this head"`
+}
+
+type patchsetsResponse struct {
+	Patchsets []patchsetResponse `json:"patchsets"`
+}
+
 // blobRangeResponse serves a slice of the file blob at a given
 // sha so the diff viewer can expand context around hunks. Lines
 // are returned as-is (no trailing newline); callers re-insert

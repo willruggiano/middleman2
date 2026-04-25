@@ -21,6 +21,7 @@
   import ReviewCoverBanner from "./ReviewCoverBanner.svelte";
   import ReviewBriefCard from "./ReviewBriefCard.svelte";
   import PRNotesPanel from "./PRNotesPanel.svelte";
+  import PatchsetPicker from "../diff/PatchsetPicker.svelte";
 
   const { detail: detailStore, pulls, activity } = getStores();
   const client = getClient();
@@ -365,6 +366,7 @@
           </aside>
           <div class="files-main">
             <ReviewCoverBanner {pr} {owner} {name} />
+            <PatchsetPicker />
             <ReviewBriefCard {owner} {name} {number} />
             <DiffView {owner} {name} {number} />
             <PRNotesPanel />

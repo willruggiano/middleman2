@@ -6,6 +6,15 @@ export type DiffScope =
   | { kind: "range"; fromSha: string; toSha: string }
   | { kind: "unreviewed" };
 
+export interface Patchset {
+  id: number;
+  number: number;
+  head_sha: string;
+  base_sha: string;
+  merge_base_sha: string;
+  observed_at: string;
+}
+
 export interface DiffStoreOptions {
   getBasePath?: () => string;
 }
@@ -215,6 +224,13 @@ export function createDiffStore(opts?: DiffStoreOptions) {
   let activeFile = $state<string | null>(null);
   let scrollTarget = $state<string | null>(null);
   let scrolling = $state(false);
+  // Patchsets are the distinct (head_sha, base_sha) pairs sync has
+  // observed for the PR — Gerrit-style PSn chips. Loaded lazily on
+  // first paint of the review surface; null = "not yet fetched".
+  let patchsets = $state<Patchset[] | null>(null);
+  let patchsetsLoading = $state(false);
+  let patchsetsError = $state<string | null>(null);
+
   let commits = $state<CommitInfo[] | null>(null);
   let commitsLoading = $state(false);
   let commitsError = $state<string | null>(null);
@@ -371,6 +387,8 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     // new head SHAs that the sync just wrote to the DB.
     commits = null;
     commitsError = null;
+    patchsets = null;
+    patchsetsError = null;
     void loadCommits();
     void reloadDiffOnly();
   }
@@ -490,6 +508,9 @@ export function createDiffStore(opts?: DiffStoreOptions) {
       commits = null;
       commitsLoading = false;
       commitsError = null;
+      patchsets = null;
+      patchsetsLoading = false;
+      patchsetsError = null;
       resetNotes();
     }
 
@@ -586,6 +607,9 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     commits = null;
     commitsLoading = false;
     commitsError = null;
+    patchsets = null;
+    patchsetsLoading = false;
+    patchsetsError = null;
     resetNotes();
     scope = { kind: "head" };
     currentOwner = "";
@@ -644,6 +668,57 @@ export function createDiffStore(opts?: DiffStoreOptions) {
         commitsLoading = false;
       }
     }
+  }
+
+  async function loadPatchsets(): Promise<void> {
+    if (patchsets !== null || patchsetsLoading) return;
+    if (!currentOwner || !currentName || !currentNumber) return;
+
+    patchsetsLoading = true;
+    patchsetsError = null;
+    const owner = currentOwner;
+    const name = currentName;
+    const number = currentNumber;
+    try {
+      const basePath = getBasePath();
+      const url =
+        `${basePath}api/v1/repos/` +
+        `${encodeURIComponent(owner)}/` +
+        `${encodeURIComponent(name)}/` +
+        `pulls/${number}/patchsets`;
+      const response = await fetch(url);
+      if (currentOwner !== owner || currentName !== name || currentNumber !== number) return;
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(
+          (body as Record<string, string>).detail ??
+            (body as Record<string, string>).title ??
+            `HTTP ${response.status}`,
+        );
+      }
+      const data = (await response.json()) as { patchsets: Patchset[] };
+      if (currentOwner !== owner || currentName !== name || currentNumber !== number) return;
+      patchsets = data.patchsets ?? [];
+    } catch (err) {
+      if (currentOwner !== owner || currentName !== name || currentNumber !== number) return;
+      patchsetsError = err instanceof Error ? err.message : String(err);
+    } finally {
+      if (currentOwner === owner && currentName === name && currentNumber === number) {
+        patchsetsLoading = false;
+      }
+    }
+  }
+
+  function getPatchsets(): Patchset[] | null {
+    return patchsets;
+  }
+
+  function isPatchsetsLoading(): boolean {
+    return patchsetsLoading;
+  }
+
+  function getPatchsetsError(): string | null {
+    return patchsetsError;
   }
 
   function getScope(): DiffScope {
@@ -1236,6 +1311,10 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     getDraftCommentsForPath,
     clearDraft,
     loadCommits,
+    loadPatchsets,
+    getPatchsets,
+    isPatchsetsLoading,
+    getPatchsetsError,
     loadBlobRange,
     loadNotes,
     updateNotes,
