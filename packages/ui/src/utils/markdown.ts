@@ -63,9 +63,14 @@ const FILE_REF_EXTS = [
 
 const FILE_REF_EXT_GROUP = FILE_REF_EXTS.join("|");
 
-// Captures: 1=path (with required extension), 2=line, 3=optional end line
+// Captures: 1=path (with required extension), 2=line, 3=optional end line.
+// The path must include at least one "/" to count as multi-segment;
+// bare filenames like "huma_routes.go:2267" are too ambiguous to link
+// reliably (Claude often omits the directory) and would 404 on github
+// when the file lives in a subdirectory. Better to leave them as plain
+// text than to send the reader to a dead link.
 const FILE_REF_RE = new RegExp(
-  String.raw`([\w./\-]+\.(?:` +
+  String.raw`([\w.\-]+(?:\/[\w.\-]+)+\.(?:` +
     FILE_REF_EXT_GROUP +
     String.raw`))(?::(\d+)(?:[-:](\d+))?)`,
 );

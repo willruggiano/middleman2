@@ -53,6 +53,15 @@ describe("renderMarkdown file ref linking", () => {
     expect(renderMarkdown("internal/x.go in passing", REPO)).not.toContain("<a");
   });
 
+  it("does not link bare filenames without a directory", () => {
+    // "huma_routes.go:2267" is too ambiguous — the file is at
+    // internal/server/huma_routes.go but Claude often omits the dir.
+    // Linking blindly produces a 404, so leave it as plain text.
+    const html = renderMarkdown("see huma_routes.go:2267 for the handler", REPO);
+    expect(html).not.toContain("<a");
+    expect(html).toContain("huma_routes.go:2267");
+  });
+
   it("does not match version-like or time-like colon strings", () => {
     expect(renderMarkdown("version 1.2.3:5 is broken", REPO)).not.toContain("<a");
     expect(renderMarkdown("at 09:30:45 the build started", REPO)).not.toContain("<a");
