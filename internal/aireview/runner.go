@@ -127,6 +127,12 @@ type CreateThreadInput struct {
 	SelectionText  *string
 	CommitSHA      string
 	Question       string
+	// PRMergeBaseSHA / PRHeadSHA bound the PR's commit range so the
+	// runner can pre-cache `git show` for each commit into a per-
+	// worktree directory Claude can Read on demand. Without these,
+	// the cache is skipped (Claude still has the anchored hunk).
+	PRMergeBaseSHA string
+	PRHeadSHA      string
 	// PromptContext is free-form text appended to the prompt to give
 	// Claude additional orientation (PR title, branch, etc.). Kept
 	// separate so the caller controls what goes in.
@@ -168,7 +174,9 @@ func (r *Runner) CreateThread(ctx context.Context, in CreateThreadInput) (db.AIT
 	}
 	thread.WorktreePath = &worktree
 
-	r.spawnQuestion(thread, question, buildPrompt(in, in.Question))
+	cachedShas := r.cachePRCommits(ctx, in.Owner, in.Name, worktree, in.PRMergeBaseSHA, in.PRHeadSHA)
+
+	r.spawnQuestion(thread, question, buildPrompt(in, in.Question, cachedShas))
 	return thread, question, nil
 }
 
@@ -399,6 +407,73 @@ func (r *Runner) cleanWorktreePath(ctx context.Context, cloneDir, worktreePath s
 	_ = exec.CommandContext(ctx, "git", "-C", cloneDir, "worktree", "prune").Run()
 }
 
+// commitCacheDirName lives inside the worktree as a sibling to the
+// checked-out files. Claude reads files from there with the Read
+// tool; a leading dot keeps it tucked away from casual greps over
+// the working tree. The directory is ephemeral — it goes away with
+// the worktree at thread/brief teardown.
+const commitCacheDirName = ".middleman-commits"
+
+// cachePRCommits writes one file per first-parent commit in
+// mergeBase..head to <worktree>/.middleman-commits/<sha>.diff so
+// Claude can pull commit context (message + diff) on demand without
+// Bash. Best-effort: a failure to enumerate commits or write any
+// individual file is logged and the cache silently skips that SHA;
+// the worst case is "Claude doesn't have that commit's details" not
+// a hard failure of thread creation.
+//
+// Returns the list of cached SHAs (oldest-first) so callers can
+// surface them in the prompt.
+func (r *Runner) cachePRCommits(
+	ctx context.Context, owner, name, worktreePath, mergeBaseSHA, headSHA string,
+) []string {
+	if mergeBaseSHA == "" || headSHA == "" || mergeBaseSHA == headSHA {
+		return nil
+	}
+	if r.hostFor == nil {
+		return nil
+	}
+	host := r.hostFor(owner, name)
+	if host == "" {
+		host = "github.com"
+	}
+	cloneDir := r.clones.ClonePath(host, owner, name)
+	out, err := exec.CommandContext(ctx, "git", "-C", cloneDir,
+		"log", "--first-parent", "--reverse", "--format=%H",
+		mergeBaseSHA+".."+headSHA,
+	).Output()
+	if err != nil {
+		slog.Warn("commit cache: list commits failed",
+			"owner", owner, "name", name, "merge_base", mergeBaseSHA, "head", headSHA, "err", err)
+		return nil
+	}
+	shas := strings.Fields(strings.TrimSpace(string(out)))
+	if len(shas) == 0 {
+		return nil
+	}
+	cacheDir := filepath.Join(worktreePath, commitCacheDirName)
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		slog.Warn("commit cache: mkdir failed", "path", cacheDir, "err", err)
+		return nil
+	}
+	cached := make([]string, 0, len(shas))
+	for _, sha := range shas {
+		body, err := exec.CommandContext(ctx, "git", "-C", cloneDir,
+			"show", "--format=fuller", "--no-color", sha,
+		).Output()
+		if err != nil {
+			slog.Warn("commit cache: git show failed", "sha", sha, "err", err)
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(cacheDir, sha+".diff"), body, 0o644); err != nil {
+			slog.Warn("commit cache: write failed", "sha", sha, "err", err)
+			continue
+		}
+		cached = append(cached, sha)
+	}
+	return cached
+}
+
 // removeWorktree does a best-effort cleanup. Errors are logged but not
 // surfaced — a dangling worktree is preferable to leaving a thread
 // stuck open.
@@ -418,7 +493,7 @@ func (r *Runner) removeWorktree(ctx context.Context, owner, name, worktreePath s
 // buildPrompt assembles the first-question prompt. Follow-ups reuse
 // the Claude session and only need the new question text, but the
 // first message primes the model with PR location + selected code.
-func buildPrompt(in CreateThreadInput, question string) string {
+func buildPrompt(in CreateThreadInput, question string, cachedCommitShas []string) string {
 	var b strings.Builder
 	b.WriteString(
 		"You are a code review assistant. A reviewer has asked a question about a pull request. " +
@@ -449,8 +524,33 @@ func buildPrompt(in CreateThreadInput, question string) string {
 		b.WriteString(*in.SelectionText)
 		b.WriteString("\n```\n")
 	}
+	b.WriteString(commitCacheNotice(cachedCommitShas))
 	b.WriteString("\nQuestion:\n")
 	b.WriteString(question)
+	return b.String()
+}
+
+// commitCacheNotice tells Claude where the per-commit cache lives
+// and what's in it. Returns "" when nothing was cached so the prompt
+// doesn't lie about resources that aren't there.
+func commitCacheNotice(cachedShas []string) string {
+	if len(cachedShas) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nPer-commit context:\n")
+	b.WriteString("Each first-parent commit in this PR has a cached `git show --format=fuller` ")
+	b.WriteString("output at `")
+	b.WriteString(commitCacheDirName)
+	b.WriteString("/<full-commit-sha>.diff` in the working directory. ")
+	b.WriteString("Read those files (with the Read tool) when you need a specific commit's ")
+	b.WriteString("message or its line-level changes — don't guess at history when you can ")
+	b.WriteString("read the actual commit. Cached SHAs (oldest first):\n")
+	for _, sha := range cachedShas {
+		b.WriteString("  - ")
+		b.WriteString(sha)
+		b.WriteString("\n")
+	}
 	return b.String()
 }
 
@@ -487,7 +587,11 @@ type BriefInput struct {
 	Owner          string
 	Name           string
 	HeadSHA        string
-	Depth          string // "quick" or "deep"
+	// MergeBaseSHA bounds the PR's commit range for the per-commit
+	// cache. When empty the cache is skipped (the brief still has the
+	// commit log + author description in PromptContext).
+	MergeBaseSHA string
+	Depth        string // "quick" or "deep"
 	// PromptContext gets appended to the prompt — the PR title/
 	// branches/body so Claude has some framing beyond the diff.
 	PromptContext string
@@ -520,7 +624,9 @@ func (r *Runner) CreateBrief(ctx context.Context, in BriefInput) (db.AIBrief, er
 		return db.AIBrief{}, fmt.Errorf("provision worktree: %w", err)
 	}
 
-	r.spawnBrief(brief, worktree, in)
+	cachedShas := r.cachePRCommits(ctx, in.Owner, in.Name, worktree, in.MergeBaseSHA, in.HeadSHA)
+
+	r.spawnBrief(brief, worktree, in, cachedShas)
 	brief.WorktreePath = &worktree
 	return brief, nil
 }
@@ -556,7 +662,7 @@ func briefWorktreeKey(briefID int64) int64 {
 	return 1_000_000_000 + briefID
 }
 
-func (r *Runner) spawnBrief(brief db.AIBrief, worktreePath string, in BriefInput) {
+func (r *Runner) spawnBrief(brief db.AIBrief, worktreePath string, in BriefInput, cachedShas []string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.mu.Lock()
 	r.briefsRunning[brief.ID] = cancel
@@ -569,12 +675,12 @@ func (r *Runner) spawnBrief(brief db.AIBrief, worktreePath string, in BriefInput
 			r.mu.Unlock()
 			cancel()
 		}()
-		r.runBrief(ctx, brief, worktreePath, in)
+		r.runBrief(ctx, brief, worktreePath, in, cachedShas)
 	}()
 }
 
-func (r *Runner) runBrief(ctx context.Context, brief db.AIBrief, worktreePath string, in BriefInput) {
-	prompt := r.briefPrompt(in)
+func (r *Runner) runBrief(ctx context.Context, brief db.AIBrief, worktreePath string, in BriefInput, cachedShas []string) {
+	prompt := r.briefPrompt(in, cachedShas)
 
 	// Brief uses the same restricted tool set as Q&A. Deep mode gets
 	// the same tools — the difference is time budget / prompt wording,
@@ -641,8 +747,8 @@ func (r *Runner) runBrief(ctx context.Context, brief db.AIBrief, worktreePath st
 // with the per-PR context block, otherwise context is appended. On
 // any read error we log and fall back to the built-in prompt so the
 // brief still runs.
-func (r *Runner) briefPrompt(in BriefInput) string {
-	context := briefContextBlock(in)
+func (r *Runner) briefPrompt(in BriefInput, cachedShas []string) string {
+	context := briefContextBlock(in) + commitCacheNotice(cachedShas)
 	if r.briefPromptFile != "" {
 		data, err := os.ReadFile(r.briefPromptFile)
 		if err == nil {
@@ -655,7 +761,7 @@ func (r *Runner) briefPrompt(in BriefInput) string {
 		slog.Warn("read brief prompt override failed; using built-in",
 			"path", r.briefPromptFile, "err", err)
 	}
-	return buildBriefPrompt(in)
+	return buildBriefPrompt(in, cachedShas)
 }
 
 // briefContextBlock renders just the dynamic per-PR context that
@@ -680,14 +786,16 @@ func briefContextBlock(in BriefInput) string {
 // buildBriefPrompt assembles the structured-output prompt sent to
 // Claude. The strict Markdown structure lets the UI parse sections
 // deterministically.
-func buildBriefPrompt(in BriefInput) string {
+func buildBriefPrompt(in BriefInput, cachedShas []string) string {
 	var b strings.Builder
 	b.WriteString(briefPromptHeader)
 	b.WriteString("\n\n")
 	b.WriteString(briefContextBlock(in))
+	b.WriteString(commitCacheNotice(cachedShas))
 	b.WriteString(
 		"\nBash is not available. Read files directly from the working copy — it is checked out at the PR head. " +
-			"The diff and commit log are pre-computed and included in the Context block above.\n",
+			"The PR-wide diff and commit log are pre-computed in the Context block above; per-commit details " +
+			"are in the cache directory described above when you need them.\n",
 	)
 	return b.String()
 }

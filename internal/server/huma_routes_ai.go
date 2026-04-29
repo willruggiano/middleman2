@@ -191,6 +191,16 @@ func (s *Server) createAIThread(ctx context.Context, input *createAIThreadInput)
 		return nil, huma.Error404NotFound("pull request not found")
 	}
 
+	// Look up the PR's merge_base / head so the runner can pre-cache
+	// per-commit `git show` output for Claude to Read on demand. A
+	// missing/empty result just disables the cache; the thread still
+	// works.
+	var mergeBaseSHA, headSHA string
+	if shas, err := s.db.GetDiffSHAs(ctx, input.Owner, input.Name, input.Number); err == nil && shas != nil {
+		mergeBaseSHA = shas.MergeBaseSHA
+		headSHA = shas.DiffHeadSHA
+	}
+
 	thread, question, err := s.aiReview.CreateThread(ctx, aireview.CreateThreadInput{
 		MergeRequestID: mrID,
 		Owner:          input.Owner,
@@ -205,6 +215,8 @@ func (s *Server) createAIThread(ctx context.Context, input *createAIThreadInput)
 		CommitSHA:      input.Body.CommitSHA,
 		Question:       input.Body.Question,
 		PromptContext:  input.Body.PromptContext,
+		PRMergeBaseSHA: mergeBaseSHA,
+		PRHeadSHA:      headSHA,
 	})
 	if err != nil {
 		return nil, huma.Error502BadGateway("create thread: " + err.Error())
@@ -490,6 +502,7 @@ func (s *Server) createAIBrief(ctx context.Context, input *createBriefInput) (*a
 		Owner:          input.Owner,
 		Name:           input.Name,
 		HeadSHA:        shas.DiffHeadSHA,
+		MergeBaseSHA:   shas.MergeBaseSHA,
 		Depth:          depth,
 		PromptContext:  ctxBuf.String(),
 	})

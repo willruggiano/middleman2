@@ -50,7 +50,7 @@ func TestBuildPrompt(t *testing.T) {
 		HunkText:      "@@ -40,3 +40,3 @@\n-old\n+new",
 		SelectionText: &sel,
 		PromptContext: "PR #1: fix things",
-	}, "what does this do?")
+	}, "what does this do?", nil)
 
 	assert.Contains(t, prompt, "PR #1: fix things")
 	assert.Contains(t, prompt, "File: foo.go")
@@ -70,7 +70,7 @@ func TestBriefPrompt_OverrideFile_WithPlaceholder(t *testing.T) {
 		[]byte("MY CUSTOM RULES\n\n{{CONTEXT}}\n\nSignoff."), 0o644))
 
 	runner := New(RunnerConfig{BriefPromptFile: path})
-	got := runner.briefPrompt(BriefInput{HeadSHA: "abc1234", Depth: "quick"})
+	got := runner.briefPrompt(BriefInput{HeadSHA: "abc1234", Depth: "quick"}, nil)
 	assert.Contains(t, got, "MY CUSTOM RULES")
 	assert.Contains(t, got, "Head SHA: abc1234")
 	assert.Contains(t, got, "Signoff.")
@@ -83,7 +83,7 @@ func TestBriefPrompt_OverrideFile_WithoutPlaceholder(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("RULES ONLY."), 0o644))
 
 	runner := New(RunnerConfig{BriefPromptFile: path})
-	got := runner.briefPrompt(BriefInput{HeadSHA: "abc1234", Depth: "quick"})
+	got := runner.briefPrompt(BriefInput{HeadSHA: "abc1234", Depth: "quick"}, nil)
 	// Context block is appended at the end.
 	assert.Contains(t, got, "RULES ONLY.")
 	assert.Contains(t, got, "Head SHA: abc1234")
@@ -91,7 +91,7 @@ func TestBriefPrompt_OverrideFile_WithoutPlaceholder(t *testing.T) {
 
 func TestBriefPrompt_FallbackOnReadError(t *testing.T) {
 	runner := New(RunnerConfig{BriefPromptFile: "/nonexistent/path/brief-prompt.md"})
-	got := runner.briefPrompt(BriefInput{HeadSHA: "abc1234", Depth: "quick"})
+	got := runner.briefPrompt(BriefInput{HeadSHA: "abc1234", Depth: "quick"}, nil)
 	// Falls back to the built-in prompt.
 	assert.Contains(t, got, "You are generating a structural review brief")
 	assert.Contains(t, got, "Head SHA: abc1234")
@@ -107,10 +107,110 @@ func TestBuildPrompt_MultiLineRange(t *testing.T) {
 		HunkStartLine: &start,
 		HunkEndLine:   &end,
 		CommitSHA:     "abc1234",
-	}, "why?")
+	}, "why?", nil)
 
 	assert.Contains(t, prompt, "Anchored lines: 40-43 (RIGHT side)")
 	assert.NotContains(t, prompt, "Anchored line: 43")
+}
+
+func TestCommitCacheNotice(t *testing.T) {
+	// Empty list → no notice (don't lie about resources).
+	assert.Equal(t, "", commitCacheNotice(nil))
+	assert.Equal(t, "", commitCacheNotice([]string{}))
+
+	got := commitCacheNotice([]string{"abc1234", "def5678"})
+	assert.Contains(t, got, ".middleman-commits/<full-commit-sha>.diff")
+	assert.Contains(t, got, "abc1234")
+	assert.Contains(t, got, "def5678")
+	// Buildprompt callers should be able to find this section by header.
+	assert.Contains(t, got, "Per-commit context:")
+}
+
+func TestBuildPrompt_IncludesCommitCacheNotice(t *testing.T) {
+	prompt := buildPrompt(CreateThreadInput{
+		Path: "foo.go", AnchorSide: "RIGHT", AnchorLine: 1,
+		CommitSHA: "abc1234",
+	}, "?", []string{"abc1234"})
+	assert.Contains(t, prompt, "Per-commit context:")
+	assert.Contains(t, prompt, "abc1234")
+}
+
+func TestCachePRCommits_WritesFiles(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	// Stand up a bare repo + worktree at the latest commit, with a
+	// PR-style range merge_base..head. We then run cachePRCommits
+	// against the partition and verify each commit got a file.
+	root := t.TempDir()
+	bareDir := filepath.Join(root, "github.com", "acme", "widget.git")
+	require.NoError(os.MkdirAll(filepath.Dir(bareDir), 0o755))
+
+	runGit := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+		)
+		out, err := cmd.CombinedOutput()
+		require.NoError(err, "git %v: %s", args, out)
+	}
+	runGit(root, "init", "--bare", "--initial-branch=main", bareDir)
+
+	work := filepath.Join(root, "work")
+	runGit(root, "clone", bareDir, work)
+	runGit(work, "config", "user.email", "t@t")
+	runGit(work, "config", "user.name", "T")
+
+	require.NoError(os.WriteFile(filepath.Join(work, "base.txt"), []byte("base\n"), 0o644))
+	runGit(work, "add", ".")
+	runGit(work, "commit", "-m", "M0")
+	runGit(work, "push", "origin", "main")
+
+	mergeBaseCmd := exec.Command("git", "rev-parse", "HEAD")
+	mergeBaseCmd.Dir = work
+	mbOut, err := mergeBaseCmd.Output()
+	require.NoError(err)
+	mergeBase := strings.TrimSpace(string(mbOut))
+
+	runGit(work, "checkout", "-b", "pr")
+	require.NoError(os.WriteFile(filepath.Join(work, "a.txt"), []byte("a\n"), 0o644))
+	runGit(work, "add", ".")
+	runGit(work, "commit", "-m", "first PR commit\n\nbody one")
+	require.NoError(os.WriteFile(filepath.Join(work, "b.txt"), []byte("b\n"), 0o644))
+	runGit(work, "add", ".")
+	runGit(work, "commit", "-m", "second PR commit")
+	headCmd := exec.Command("git", "rev-parse", "HEAD")
+	headCmd.Dir = work
+	hOut, err := headCmd.Output()
+	require.NoError(err)
+	head := strings.TrimSpace(string(hOut))
+	runGit(work, "push", "origin", "pr")
+
+	// Worktree under root/wt to receive the cache.
+	worktreePath := filepath.Join(root, "wt")
+	runGit(bareDir, "worktree", "add", "--detach", worktreePath, head)
+
+	runner := New(RunnerConfig{
+		Clones:  gitclone.New(root, nil),
+		HostFor: func(string, string) string { return "github.com" },
+	})
+
+	got := runner.cachePRCommits(ctx, "acme", "widget", worktreePath, mergeBase, head)
+	require.Len(got, 2, "expected 2 first-parent commits cached")
+
+	for _, sha := range got {
+		path := filepath.Join(worktreePath, commitCacheDirName, sha+".diff")
+		body, err := os.ReadFile(path)
+		require.NoError(err, "expected cache file at %s", path)
+		// Each cached file must contain the header (commit + author)
+		// and a diff section, since we used --format=fuller.
+		assert.Contains(string(body), "commit "+sha)
+		assert.Contains(string(body), "AuthorDate:")
+		assert.Contains(string(body), "diff --git")
+	}
 }
 
 // writeFakeClaude installs a shell script at path that emits the given
