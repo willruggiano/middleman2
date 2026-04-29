@@ -31,6 +31,12 @@ export interface AISessionBrief {
 
 export interface AISessionsStoreOptions {
   client: MiddlemanClient;
+  // onThreadDeleted fires after a successful server-side close so
+  // the per-PR aiStore can mirror the deletion in its local state.
+  // Without it, the diff view's thread cards keep rendering until
+  // aiStore's next refresh — which is gated on in-flight questions
+  // and so never happens for an idle thread.
+  onThreadDeleted?: (threadID: number) => void;
 }
 
 // aiSessions polls /ai/sessions so the header can surface a running
@@ -148,6 +154,7 @@ export function createAISessionsStore(opts: AISessionsStoreOptions) {
       return;
     }
     threads = threads.filter((x) => x.id !== t.id);
+    opts.onThreadDeleted?.(t.id);
   }
 
   async function cancelBrief(b: AISessionBrief): Promise<void> {

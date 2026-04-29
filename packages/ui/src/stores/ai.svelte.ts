@@ -62,6 +62,20 @@ export function createAIStore(opts?: AIStoreOptions) {
 
   // --- writes ---
 
+  // markThreadDeletedExternally lets other stores (e.g. the global
+  // aiSessions list, which closes threads from outside this PR's
+  // diff view) notify us of a server-side deletion so we strip the
+  // card immediately. Without this, the diff view shows a phantom
+  // thread until the next periodic refresh — which only fires while
+  // a question is in flight, so completed-and-idle threads stick
+  // around indefinitely.
+  function markThreadDeletedExternally(threadID: number): void {
+    deletedThreadIds.add(threadID);
+    setTimeout(() => deletedThreadIds.delete(threadID), TOMBSTONE_MS);
+    threads = threads.filter((t) => t.id !== threadID);
+    questions = questions.filter((q) => q.thread_id !== threadID);
+  }
+
   async function refresh(): Promise<void> {
     if (!owner) return;
     loading = true;
@@ -156,6 +170,9 @@ export function createAIStore(opts?: AIStoreOptions) {
     try {
       const res = await fetch(`${prefix()}/ai-threads/${threadID}`, {
         method: "DELETE",
+        // Server's CSRF guard rejects mutations without an
+        // application/json content-type (even on zero-body DELETEs).
+        headers: { "content-type": "application/json" },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -180,7 +197,10 @@ export function createAIStore(opts?: AIStoreOptions) {
     try {
       const res = await fetch(
         `${prefix()}/ai-threads/${threadID}/questions/${questionID}`,
-        { method: "DELETE" },
+        {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+        },
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -258,6 +278,7 @@ export function createAIStore(opts?: AIStoreOptions) {
     addFollowUp,
     deleteThread,
     deleteQuestion,
+    markThreadDeletedExternally,
     getError,
     clearError,
     start,

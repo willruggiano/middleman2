@@ -234,7 +234,12 @@
     const viewerStore = createViewerStore({ client: cl });
     void viewerStore.load();
 
-    const aiSessionsStore = createAISessionsStore({ client: cl });
+    const aiSessionsStore = createAISessionsStore({
+      client: cl,
+      onThreadDeleted: (threadID) => {
+        aiStore.markThreadDeletedExternally(threadID);
+      },
+    });
     aiSessionsStore.startPolling();
 
     const si: StoreInstances = {
