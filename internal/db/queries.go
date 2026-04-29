@@ -1198,6 +1198,203 @@ func (d *DB) ReviewAuthorsForMRs(
 	return out, rows.Err()
 }
 
+// MRReviewState classifies, for the configured viewer, where each PR
+// sits in the reviewer's queue:
+//
+//	"unreviewed"  — viewer has never submitted a review on this PR.
+//	"reviewed"    — viewer has reviewed; nothing has changed since.
+//	"responded"   — viewer has reviewed; the author has either pushed
+//	                a new patchset OR commented since the viewer's
+//	                last review (the ball is back in the viewer's
+//	                court).
+//
+// The state derivation is OR-of-signals: a new patchset OR an author
+// comment after the viewer's latest review counts as "responded".
+// Both are observed cheaply from existing tables (mr_events for the
+// review/comment timestamps, pr_patchsets for the patchset
+// timestamps); no new schema is required.
+type MRReviewState struct {
+	MRID                  int64
+	State                 string
+	MyLatestReviewAt      *time.Time
+	LatestPatchsetAt      *time.Time
+	LatestAuthorCommentAt *time.Time
+}
+
+// ReviewStatesForMRs computes the per-PR review state for the given
+// merge-request IDs. The state is per-viewer because "responded"
+// only makes sense relative to "your" last review. Three indexed
+// look-ups (viewer's reviews, latest patchset, latest author
+// comment) combine in Go to produce the final state.
+//
+// Empty viewerLogin returns every MR as "unreviewed" — the viewer
+// hasn't been resolved yet; the frontend will refetch the list once
+// /me lands.
+func (d *DB) ReviewStatesForMRs(
+	ctx context.Context, mrIDs []int64, viewerLogin string,
+) (map[int64]MRReviewState, error) {
+	out := make(map[int64]MRReviewState, len(mrIDs))
+	for _, id := range mrIDs {
+		out[id] = MRReviewState{MRID: id, State: "unreviewed"}
+	}
+	if len(mrIDs) == 0 || viewerLogin == "" {
+		return out, nil
+	}
+
+	myReviews, err := d.latestReviewByViewer(ctx, mrIDs, viewerLogin)
+	if err != nil {
+		return nil, err
+	}
+	patchsets, err := d.latestPatchsetObservedAt(ctx, mrIDs)
+	if err != nil {
+		return nil, err
+	}
+	authorComments, err := d.latestAuthorComment(ctx, mrIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, id := range mrIDs {
+		s := out[id]
+		s.MyLatestReviewAt = myReviews[id]
+		s.LatestPatchsetAt = patchsets[id]
+		s.LatestAuthorCommentAt = authorComments[id]
+		if s.MyLatestReviewAt == nil {
+			s.State = "unreviewed"
+		} else {
+			responded := false
+			if s.LatestPatchsetAt != nil && s.LatestPatchsetAt.After(*s.MyLatestReviewAt) {
+				responded = true
+			}
+			if s.LatestAuthorCommentAt != nil && s.LatestAuthorCommentAt.After(*s.MyLatestReviewAt) {
+				responded = true
+			}
+			if responded {
+				s.State = "responded"
+			} else {
+				s.State = "reviewed"
+			}
+		}
+		out[id] = s
+	}
+	return out, nil
+}
+
+// scanLatestTimes runs a query that returns (mrID, MAX(time_col))
+// rows and parses each timestamp string back into UTC time. Aggregate
+// MAX() loses the column-type info that the driver uses to auto-
+// convert into time.Time, so we scan as string and parse explicitly.
+func scanLatestTimes(rows *sql.Rows) (map[int64]*time.Time, error) {
+	defer rows.Close()
+	out := map[int64]*time.Time{}
+	for rows.Next() {
+		var mrID int64
+		var ts sql.NullString
+		if err := rows.Scan(&mrID, &ts); err != nil {
+			return nil, fmt.Errorf("scan latest time: %w", err)
+		}
+		if !ts.Valid || ts.String == "" {
+			continue
+		}
+		t, err := parseSQLiteTime(ts.String)
+		if err != nil {
+			return nil, fmt.Errorf("parse %q: %w", ts.String, err)
+		}
+		t = t.UTC()
+		out[mrID] = &t
+	}
+	return out, rows.Err()
+}
+
+// parseSQLiteTime tolerates the formats SQLite hands back from
+// DATETIME columns through MAX() aggregates. The most common one
+// is Go's default time.Time.String() format because the modernc
+// driver round-trips the bound time through fmt.Stringer when the
+// aggregate strips column-type metadata.
+func parseSQLiteTime(s string) (time.Time, error) {
+	for _, layout := range []string{
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05",
+		time.RFC3339Nano,
+		time.RFC3339,
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unrecognized time format: %q", s)
+}
+
+func (d *DB) latestReviewByViewer(
+	ctx context.Context, mrIDs []int64, viewerLogin string,
+) (map[int64]*time.Time, error) {
+	placeholders := sqlPlaceholders(len(mrIDs))
+	args := make([]any, 0, len(mrIDs)+1)
+	args = append(args, viewerLogin)
+	for _, id := range mrIDs {
+		args = append(args, id)
+	}
+	rows, err := d.ro.QueryContext(ctx, fmt.Sprintf(
+		`SELECT merge_request_id, MAX(created_at)
+		   FROM middleman_mr_events
+		  WHERE event_type = 'review'
+		        AND author = ?
+		        AND merge_request_id IN (%s)
+		  GROUP BY merge_request_id`, placeholders,
+	), args...)
+	if err != nil {
+		return nil, fmt.Errorf("latest review by viewer: %w", err)
+	}
+	return scanLatestTimes(rows)
+}
+
+func (d *DB) latestPatchsetObservedAt(
+	ctx context.Context, mrIDs []int64,
+) (map[int64]*time.Time, error) {
+	placeholders := sqlPlaceholders(len(mrIDs))
+	args := make([]any, 0, len(mrIDs))
+	for _, id := range mrIDs {
+		args = append(args, id)
+	}
+	rows, err := d.ro.QueryContext(ctx, fmt.Sprintf(
+		`SELECT mr_id, MAX(observed_at)
+		   FROM middleman_pr_patchsets
+		  WHERE mr_id IN (%s)
+		  GROUP BY mr_id`, placeholders,
+	), args...)
+	if err != nil {
+		return nil, fmt.Errorf("latest patchset: %w", err)
+	}
+	return scanLatestTimes(rows)
+}
+
+func (d *DB) latestAuthorComment(
+	ctx context.Context, mrIDs []int64,
+) (map[int64]*time.Time, error) {
+	// "Author comment" = a comment whose event author equals the PR
+	// author. Joining mr_events with merge_requests on author lets a
+	// single indexed scan produce per-MR timestamps.
+	placeholders := sqlPlaceholders(len(mrIDs))
+	args := make([]any, 0, len(mrIDs))
+	for _, id := range mrIDs {
+		args = append(args, id)
+	}
+	rows, err := d.ro.QueryContext(ctx, fmt.Sprintf(
+		`SELECT e.merge_request_id, MAX(e.created_at)
+		   FROM middleman_mr_events e
+		   JOIN middleman_merge_requests mr ON mr.id = e.merge_request_id
+		  WHERE e.event_type IN ('review_comment', 'issue_comment')
+		        AND e.author = mr.author
+		        AND e.merge_request_id IN (%s)
+		  GROUP BY e.merge_request_id`, placeholders,
+	), args...)
+	if err != nil {
+		return nil, fmt.Errorf("latest author comment: %w", err)
+	}
+	return scanLatestTimes(rows)
+}
+
 // GetPreviouslyOpenMRNumbers returns MR numbers that are open in the DB but
 // not in the stillOpen set — i.e. MRs that were closed/merged since the last sync.
 //

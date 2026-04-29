@@ -28,6 +28,15 @@ type mergeRequestResponse struct {
 	// keeps the "already reviewed" set around for the UI's "in my
 	// review queue" chip.
 	ReviewerLogins []string `json:"reviewer_logins"`
+	// ReviewState classifies this PR for the configured viewer:
+	//   "unreviewed" — viewer has not submitted a review.
+	//   "reviewed"   — viewer has reviewed; nothing has changed since.
+	//   "responded"  — viewer has reviewed; the author has either
+	//                  pushed a new patchset OR commented since the
+	//                  viewer's last review.
+	// Empty when the viewer's GitHub login hasn't been resolved yet
+	// (e.g., before the first /me call lands).
+	ReviewState string `json:"review_state,omitempty"`
 }
 
 type workflowApprovalResponse struct {

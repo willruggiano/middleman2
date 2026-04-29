@@ -523,6 +523,13 @@ func (s *Server) listPulls(ctx context.Context, input *listPullsInput) (*listPul
 		return nil, huma.Error500InternalServerError("load review authors failed")
 	}
 
+	// Per-PR review state for the configured viewer. Best-effort:
+	// when the viewer login isn't cached yet (no /me call has
+	// landed), the call returns "unreviewed" for every row and the
+	// frontend will pick up real state on the next list refresh.
+	viewer := s.viewerLoginCached()
+	states, _ := s.db.ReviewStatesForMRs(ctx, mrIDs, viewer)
+
 	out := make([]mergeRequestResponse, 0, len(mrs))
 	for _, mr := range mrs {
 		rp, ok := repoByID[mr.RepoID]
@@ -545,6 +552,13 @@ func (s *Server) listPulls(ctx context.Context, input *listPullsInput) (*listPul
 			WorktreeLinks:  wl,
 			DetailLoaded:   mr.DetailFetchedAt != nil,
 			ReviewerLogins: reviewers,
+		}
+		if viewer != "" {
+			if st, ok := states[mr.ID]; ok {
+				resp.ReviewState = st.State
+			} else {
+				resp.ReviewState = "unreviewed"
+			}
 		}
 		if mr.DetailFetchedAt != nil {
 			resp.DetailFetchedAt = formatUTCRFC3339(*mr.DetailFetchedAt)

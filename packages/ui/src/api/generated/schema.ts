@@ -1535,6 +1535,7 @@ export interface components {
             repo_name: string;
             repo_owner: string;
             requested_reviewers: string[] | null;
+            review_state?: string;
             reviewer_logins: string[] | null;
             worktree_links: components["schemas"]["WorktreeLinkResponse"][] | null;
         };

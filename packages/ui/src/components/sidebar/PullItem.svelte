@@ -6,7 +6,7 @@
   import { repoColor } from "../../utils/repo-color.js";
   import GitHubLabels from "../shared/GitHubLabels.svelte";
 
-  const { pulls, viewer } = getStores();
+  const { pulls, viewer, diff: diffStore } = getStores();
 
   // True when the viewer is on the PR's requested-reviewers list.
   // `requested_reviewers` is flat: individual logins + "team:<slug>"
@@ -117,6 +117,25 @@
   );
   const labels = $derived(pr.labels ?? []);
 
+  // Effective per-row review state: server-computed
+  // unreviewed/reviewed/responded, with a local "in-review"
+  // override when the viewer has unsaved drafts. The override
+  // takes priority because drafts are work-in-progress that the
+  // reviewer needs to see surfaced regardless of upstream state.
+  // Only meaningful for open PRs — once merged/closed the chip
+  // would just be archeology.
+  const reviewState = $derived.by<
+    "unreviewed" | "reviewed" | "responded" | "in-review"
+  >(() => {
+    if (pr.State !== "open") return "unreviewed";
+    if (diffStore.hasDraftForPR(pr.repo_owner ?? "", pr.repo_name ?? "", pr.Number)) {
+      return "in-review";
+    }
+    const s = pr.review_state ?? "unreviewed";
+    if (s === "reviewed" || s === "responded") return s;
+    return "unreviewed";
+  });
+
   function handleImportClick(e: MouseEvent): void {
     e.stopPropagation();
     importAction?.handler({
@@ -137,7 +156,13 @@
 >
   <p class="title">
     <span class="state-dot" style="background: {stateColors[prState]}"></span>
-    {#if awaitingMyReview}
+    {#if reviewState === "in-review"}
+      <span class="review-chip review-chip--inreview" title="You have unsaved draft comments on this PR">drafts</span>
+    {:else if reviewState === "responded"}
+      <span class="review-chip review-chip--responded" title="The author pushed or commented after your last review">↻ updates</span>
+    {:else if reviewState === "reviewed"}
+      <span class="review-chip review-chip--reviewed" title="You reviewed this; no changes from the author since">✓ reviewed</span>
+    {:else if awaitingMyReview}
       <span class="review-chip" title="You're on the reviewer list">review</span>
     {/if}
     {pr.Title}
@@ -298,6 +323,31 @@
     background: var(--accent-blue);
     border-radius: 999px;
     flex-shrink: 0;
+  }
+
+  /* "responded" — the author moved while you were waiting; high-
+     attention amber, mirrors the patchset-picker compare-base color
+     so the "something changed since you looked" signal is consistent
+     across the app. */
+  .review-chip--responded {
+    background: var(--accent-amber);
+    color: #fff;
+  }
+
+  /* "reviewed" — you've weighed in, ball is in the author's court.
+     Muted gray says "you can deprioritize this." */
+  .review-chip--reviewed {
+    background: color-mix(in srgb, var(--text-muted) 30%, transparent);
+    color: var(--text-secondary);
+  }
+
+  /* "in-review" — you have unsaved drafts; outlined treatment so it
+     reads as work-in-progress rather than a finished state. */
+  .review-chip--inreview {
+    background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
+    color: var(--accent-blue);
+    border: 1px solid var(--accent-blue);
+    padding: 0 5px;
   }
 
   .meta-row {

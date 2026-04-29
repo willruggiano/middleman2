@@ -3,7 +3,7 @@
   import { groupByWorkflow } from "../../stores/workflow.svelte.js";
   import PullItem from "./PullItem.svelte";
 
-  const { pulls, sync, grouping, collapsedRepos, settings, authorGroups, viewer } = getStores();
+  const { pulls, sync, grouping, collapsedRepos, settings, authorGroups, viewer, diff: diffStore } = getStores();
 
   // "Awaiting my review" — viewer is on the PR's requested-reviewer
   // list. These sort to the top of the PR list (and within each
@@ -25,18 +25,69 @@
     return false;
   }
 
-  // Stable sort: items where the viewer is a requested reviewer
-  // (or has already reviewed) come first, existing relative order
-  // preserved (the source list is already sorted by
-  // last_activity_at DESC server-side).
-  function sortReviewFirst<
+  // Per-row review state, computed exactly the way PullItem renders
+  // its chip — drafts override server-computed state because they
+  // represent unsaved work the reviewer must finish.
+  function rowReviewState(
+    pr: {
+      State?: string;
+      review_state?: string | null;
+      repo_owner?: string | null;
+      repo_name?: string | null;
+      Number: number;
+    },
+  ): "in-review" | "responded" | "unreviewed" | "reviewed" {
+    if (pr.State !== "open") return "unreviewed";
+    if (diffStore.hasDraftForPR(pr.repo_owner ?? "", pr.repo_name ?? "", pr.Number)) {
+      return "in-review";
+    }
+    const s = pr.review_state ?? "unreviewed";
+    if (s === "reviewed" || s === "responded") return s;
+    return "unreviewed";
+  }
+
+  // Sort priority. Lower number = higher priority (closer to the top).
+  // The chosen order surfaces "things requiring your attention" before
+  // "things you've already touched":
+  //   0 in-review  — unsaved drafts (highest, you have work in progress)
+  //   1 responded  — author moved while you were waiting
+  //   2 unreviewed but on review queue (the existing "review" chip case)
+  //   3 unreviewed not on queue (default open PRs)
+  //   4 reviewed   — ball in the author's court; deprioritize
+  function rowPriority<
     T extends {
+      State?: string;
+      review_state?: string | null;
       requested_reviewers?: string[] | null;
       reviewer_logins?: string[] | null;
+      repo_owner?: string | null;
+      repo_name?: string | null;
+      Number: number;
+    },
+  >(pr: T): number {
+    const s = rowReviewState(pr);
+    if (s === "in-review") return 0;
+    if (s === "responded") return 1;
+    if (s === "reviewed") return 4;
+    return awaitsMyReview(pr) ? 2 : 3;
+  }
+
+  // Stable sort by review priority; existing relative order
+  // preserved within a priority bucket (the source list is already
+  // sorted by last_activity_at DESC server-side).
+  function sortReviewFirst<
+    T extends {
+      State?: string;
+      review_state?: string | null;
+      requested_reviewers?: string[] | null;
+      reviewer_logins?: string[] | null;
+      repo_owner?: string | null;
+      repo_name?: string | null;
+      Number: number;
     },
   >(list: T[]): T[] {
     return list
-      .map((item, i) => ({ item, i, prio: awaitsMyReview(item) ? 0 : 1 }))
+      .map((item, i) => ({ item, i, prio: rowPriority(item) }))
       .sort((a, b) => a.prio - b.prio || a.i - b.i)
       .map((x) => x.item);
   }
@@ -165,6 +216,26 @@
 
   let authorPopoverOpen = $state(false);
   const authorFilterActive = $derived(pulls.getFilterAuthors().length > 0);
+
+  // Review-state tally for the visible PR list. Only counts open PRs;
+  // closed/merged ones don't have an actionable review state.
+  // Computed against the unsorted list so the totals don't shuffle
+  // when sortReviewFirst reorders rows.
+  const reviewTally = $derived.by(() => {
+    let inReview = 0, responded = 0, reviewed = 0, unreviewed = 0;
+    for (const pr of pulls.getPulls()) {
+      if (pr.State !== "open") continue;
+      const s = rowReviewState(pr);
+      if (s === "in-review") inReview++;
+      else if (s === "responded") responded++;
+      else if (s === "reviewed") reviewed++;
+      else unreviewed++;
+    }
+    return {
+      inReview, responded, reviewed, unreviewed,
+      total: inReview + responded + reviewed + unreviewed,
+    };
+  });
 
   const groupList = $derived(authorGroups.list());
   const activeGroupId = $derived(authorGroups.getActiveId());
@@ -470,6 +541,22 @@
 
   {#if pulls.getFilterState() !== "open"}
     <p class="state-note">Showing items closed after middleman began tracking them</p>
+  {/if}
+  {#if reviewTally.total > 0}
+    <div class="review-tally" title="Review state breakdown across the visible list">
+      {#if reviewTally.inReview > 0}
+        <span class="review-tally__pill review-tally__pill--inreview">drafts {reviewTally.inReview}</span>
+      {/if}
+      {#if reviewTally.responded > 0}
+        <span class="review-tally__pill review-tally__pill--responded">↻ {reviewTally.responded}</span>
+      {/if}
+      {#if reviewTally.unreviewed > 0}
+        <span class="review-tally__pill review-tally__pill--unreviewed">unreviewed {reviewTally.unreviewed}</span>
+      {/if}
+      {#if reviewTally.reviewed > 0}
+        <span class="review-tally__pill review-tally__pill--reviewed">✓ {reviewTally.reviewed}</span>
+      {/if}
+    </div>
   {/if}
   <div
     class="list-body"
@@ -1123,6 +1210,47 @@
     padding: 4px 10px;
     margin: 0;
     border-bottom: 1px solid var(--border-muted);
+  }
+
+  .review-tally {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px 10px;
+    border-bottom: 1px solid var(--border-muted);
+    background: var(--bg-inset);
+  }
+
+  .review-tally__pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 999px;
+    line-height: 1.4;
+  }
+
+  .review-tally__pill--inreview {
+    color: var(--accent-blue);
+    border: 1px solid var(--accent-blue);
+    background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+  }
+
+  .review-tally__pill--responded {
+    color: #fff;
+    background: var(--accent-amber);
+  }
+
+  .review-tally__pill--unreviewed {
+    color: var(--text-secondary);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-muted);
+  }
+
+  .review-tally__pill--reviewed {
+    color: var(--text-muted);
+    background: color-mix(in srgb, var(--text-muted) 15%, transparent);
   }
   .group-toggle {
     display: flex;

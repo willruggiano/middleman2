@@ -2087,3 +2087,112 @@ func TestUpdateMRTitleBodyIgnoresStaleUpdate(t *testing.T) {
 	assert.Equal("current body", got.Body, "stale update should be ignored")
 	assert.True(got.UpdatedAt.Equal(newerUpdatedAt), "updated_at should not regress")
 }
+
+// TestReviewStatesForMRs covers the four-way classifier on a fresh
+// DB: each PR represents one classification outcome so the test
+// stays readable.
+func TestReviewStatesForMRs(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	d := openTestDB(t)
+	ctx := context.Background()
+	repoID := insertTestRepo(t, d, "acme", "widget")
+	base := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+
+	// Helper: insert an MR with an explicit author. insertTestMR
+	// hardcodes "author" — we want to vary that per case.
+	mkMR := func(num int, author string, activity time.Time) int64 {
+		mr := &MergeRequest{
+			RepoID: repoID, PlatformID: int64(num + 1000),
+			Number: num, URL: "u", Title: "t",
+			Author: author, State: "open",
+			HeadBranch: "f", BaseBranch: "main",
+			CreatedAt: activity, UpdatedAt: activity, LastActivityAt: activity,
+		}
+		id, err := d.UpsertMergeRequest(ctx, mr)
+		require.NoError(err)
+		return id
+	}
+
+	mrUnreviewed := mkMR(1, "alice", base)
+	mrReviewed := mkMR(2, "alice", base)
+	mrRespondedPush := mkMR(3, "alice", base)
+	mrRespondedTalk := mkMR(4, "alice", base)
+	mrViewerIsAuthor := mkMR(5, "viewer", base)
+
+	// Viewer reviews the latter four; nothing on mrUnreviewed.
+	require.NoError(d.UpsertMREvents(ctx, []MREvent{
+		{MergeRequestID: mrReviewed, EventType: "review", Author: "viewer",
+			CreatedAt: base.Add(time.Hour), DedupeKey: "rev-2"},
+		{MergeRequestID: mrRespondedPush, EventType: "review", Author: "viewer",
+			CreatedAt: base.Add(time.Hour), DedupeKey: "rev-3"},
+		{MergeRequestID: mrRespondedTalk, EventType: "review", Author: "viewer",
+			CreatedAt: base.Add(time.Hour), DedupeKey: "rev-4"},
+		// mrViewerIsAuthor: viewer reviewed their own PR (silly, but
+		// the classifier shouldn't crash).
+		{MergeRequestID: mrViewerIsAuthor, EventType: "review", Author: "viewer",
+			CreatedAt: base.Add(time.Hour), DedupeKey: "rev-5"},
+	}))
+
+	// mrRespondedPush: alice pushed a new patchset after the review.
+	_, _, err := d.RecordPatchset(ctx, mrRespondedPush, RecordPatchsetOpts{
+		HeadSHA: "newsha", BaseSHA: "base", MergeBaseSHA: "base",
+	})
+	require.NoError(err)
+	// Backdate the patchset to AFTER the review.
+	_, err = d.WriteDB().ExecContext(ctx,
+		`UPDATE middleman_pr_patchsets SET observed_at = ? WHERE mr_id = ?`,
+		base.Add(2*time.Hour), mrRespondedPush)
+	require.NoError(err)
+
+	// mrReviewed: stale patchset from BEFORE the review (must not flip state).
+	_, _, err = d.RecordPatchset(ctx, mrReviewed, RecordPatchsetOpts{
+		HeadSHA: "oldsha", BaseSHA: "b", MergeBaseSHA: "b",
+	})
+	require.NoError(err)
+	_, err = d.WriteDB().ExecContext(ctx,
+		`UPDATE middleman_pr_patchsets SET observed_at = ? WHERE mr_id = ?`,
+		base.Add(30*time.Minute), mrReviewed)
+	require.NoError(err)
+
+	// mrRespondedTalk: alice (PR author) commented after the review.
+	require.NoError(d.UpsertMREvents(ctx, []MREvent{
+		{MergeRequestID: mrRespondedTalk, EventType: "issue_comment", Author: "alice",
+			CreatedAt: base.Add(2 * time.Hour), DedupeKey: "comment-4"},
+		// A comment by someone else after the review should NOT count.
+		{MergeRequestID: mrReviewed, EventType: "issue_comment", Author: "carol",
+			CreatedAt: base.Add(3 * time.Hour), DedupeKey: "comment-noise"},
+	}))
+
+	got, err := d.ReviewStatesForMRs(ctx,
+		[]int64{mrUnreviewed, mrReviewed, mrRespondedPush, mrRespondedTalk, mrViewerIsAuthor},
+		"viewer",
+	)
+	require.NoError(err)
+	assert.Equal("unreviewed", got[mrUnreviewed].State)
+	assert.Equal("reviewed", got[mrReviewed].State)
+	assert.Equal("responded", got[mrRespondedPush].State)
+	assert.Equal("responded", got[mrRespondedTalk].State)
+	// Viewer-is-author edge case: there's no separate "their own PR"
+	// state; classifier just checks signals. No patchset, no other
+	// comments → stays "reviewed". This is fine — we don't expect
+	// the viewer to review their own PRs in practice.
+	assert.Equal("reviewed", got[mrViewerIsAuthor].State)
+}
+
+// Empty viewerLogin means we haven't resolved /me yet; classifier
+// should return all PRs as "unreviewed" without erroring.
+func TestReviewStatesForMRs_EmptyViewer(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	d := openTestDB(t)
+	ctx := context.Background()
+	repoID := insertTestRepo(t, d, "acme", "widget")
+	mrID := insertTestMR(t, d, repoID, 1, "test", time.Now().UTC())
+
+	got, err := d.ReviewStatesForMRs(ctx, []int64{mrID}, "")
+	require.NoError(err)
+	assert.Equal("unreviewed", got[mrID].State)
+}

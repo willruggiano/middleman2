@@ -1014,6 +1014,21 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     return draftReviews[draftKey()] ?? emptyDraft();
   }
 
+  // hasDraftForPR lets sidebar components peek at any PR's drafts,
+  // not just the currently-loaded one. Used by the per-row state
+  // chip to override server-computed state with "in-review" when
+  // the viewer has unsaved comments. Reads $state-backed
+  // draftReviews so callers re-render when drafts change.
+  function hasDraftForPR(
+    owner: string,
+    name: string,
+    number: number,
+  ): boolean {
+    const key = `${owner}/${name}#${number}`;
+    const d = draftReviews[key];
+    return !!d && d.comments.length > 0;
+  }
+
   function setDraftBody(body: string): void {
     if (!currentOwner) return;
     const key = draftKey();
@@ -1329,6 +1344,7 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     isFileReviewed,
     getFileReviewProgress,
     getDraft,
+    hasDraftForPR,
     setDraftBody,
     setDraftEvent,
     addDraftComment,
