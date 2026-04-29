@@ -47,13 +47,12 @@
   }
 
   // Sort priority. Lower number = higher priority (closer to the top).
-  // The chosen order surfaces "things requiring your attention" before
-  // "things you've already touched":
-  //   0 in-review  — unsaved drafts (highest, you have work in progress)
-  //   1 responded  — author moved while you were waiting
-  //   2 unreviewed but on review queue (the existing "review" chip case)
-  //   3 unreviewed not on queue (default open PRs)
-  //   4 reviewed   — ball in the author's court; deprioritize
+  // Top-to-bottom order:
+  //   0 reviewed              — ball in author's court; you're done
+  //   1 in-review             — unsaved drafts you're working on
+  //   2 responded             — author moved while you were waiting
+  //   3 unreviewed-on-queue   — you're on the reviewer list
+  //   4 unreviewed            — default open PRs
   function rowPriority<
     T extends {
       State?: string;
@@ -66,10 +65,10 @@
     },
   >(pr: T): number {
     const s = rowReviewState(pr);
-    if (s === "in-review") return 0;
-    if (s === "responded") return 1;
-    if (s === "reviewed") return 4;
-    return awaitsMyReview(pr) ? 2 : 3;
+    if (s === "reviewed") return 0;
+    if (s === "in-review") return 1;
+    if (s === "responded") return 2;
+    return awaitsMyReview(pr) ? 3 : 4;
   }
 
   // Stable sort by review priority; existing relative order
