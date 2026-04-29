@@ -107,7 +107,7 @@ func TestBriefPrompt_StructureLock(t *testing.T) {
 	got := runner.briefPrompt(BriefInput{HeadSHA: "abc1234", Depth: "quick"}, nil)
 	assert := assert.New(t)
 	for _, heading := range []string{
-		"## Subsystem", "## Intent", "## Before", "## After",
+		"## Subsystem", "## Layers", "## Intent", "## Before", "## After",
 		"## Mechanics", "## Commits", "## Risk surface", "## Open questions",
 	} {
 		assert.Contains(got, heading, "missing section %q", heading)
@@ -116,6 +116,10 @@ func TestBriefPrompt_StructureLock(t *testing.T) {
 	assert.Contains(got, "Map")
 	assert.Contains(got, "Compass")
 	assert.Contains(got, "Padding is worse than omitting")
+	// Layer-resolution rule must stay in the prompt — without it
+	// Claude defaults to whatever shape it picks first.
+	assert.Contains(got, "concrete identifiers")
+	assert.Contains(got, "concept labels")
 }
 
 func TestBuildPrompt_MultiLineRange(t *testing.T) {

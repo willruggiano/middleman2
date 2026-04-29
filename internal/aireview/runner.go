@@ -816,6 +816,27 @@ Output the following Markdown sections, in this order, with headings verbatim. *
 ## Subsystem
 ≤ 4 lines. For each affected subsystem: a phrase saying what it does, where it sits in the architecture, and the 1–2 invariants/protocols a reviewer needs to hold in mind. Cite the entrypoint file:line. Skip when the touched code is a leaf utility with no useful subsystem context.
 
+## Layers
+≤ 6 lines. The PR's vertical spine, outer (user-facing) at top to inner (leaves) at bottom, annotated ` + "`[changed]`" + ` on the rungs the PR actually touched (unchanged rungs are scaffolding so the reviewer knows the path). Cite file:line on each named rung. Use plain ASCII (indented arrows). Skip when the PR is a true single-file leaf change (rename, comment fix, mechanical refactor with no semantic shift).
+
+Pick the resolution that fits: prefer **concrete identifiers** (` + "`Class.method`" + `, function names) when the spine fits in 4–6 lines that way. Climb to **concept labels** ("HTTP route", "service", "core", "leaf") only when concrete names would blow past the cap or the change spans multiple subsystems. Mixing is fine — the outer rung can be a concept while the leaf is a function — but each rung must be one or the other, not a half-step.
+
+Big-scope example (concepts):
+` + "```" + `
+HTTP route   POST /pulls/.../diff       (huma_routes.go:2267)   [changed]
+  → service  diff orchestration         (huma_routes.go:2329)   [changed]
+    → core   gitclone.Diff              (diff.go:37)            [changed]
+      → leaf parse + render hunks       (parse.go:120)
+` + "```" + `
+
+Narrow-scope example (names):
+` + "```" + `
+PullDetail.svelte                                                [changed]
+  → diffStore.selectPatchsets()    (diff.svelte.ts:1168)         [changed]
+    → loadDiff()                   (diff.svelte.ts:494)
+      → fetch /diff?from_patchset=...                            [changed]
+` + "```" + `
+
 ## Intent
 1–2 sentences. What this PR does, based on the code — not the title.
 

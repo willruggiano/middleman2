@@ -77,13 +77,14 @@
   }
 
   // Parse the Markdown into known sections. The generator prompt
-  // demands exact "## Subsystem / Intent / Before / After / Mechanics
-  // / Commits / Risk surface / Open questions" headings; anything
-  // outside those falls into "other" and renders raw at the bottom.
-  // "observations" is kept as a back-compat bucket for briefs
-  // generated against the old prompt.
+  // demands exact "## Subsystem / Layers / Intent / Before / After /
+  // Mechanics / Commits / Risk surface / Open questions" headings;
+  // anything outside those falls into "other" and renders raw at
+  // the bottom. "observations" is kept as a back-compat bucket for
+  // briefs generated against the old prompt.
   interface Sections {
     subsystem: string;
+    layers: string;
     intent: string;
     before: string;
     after: string;
@@ -98,6 +99,7 @@
   function emptySections(): Sections {
     return {
       subsystem: "",
+      layers: "",
       intent: "",
       before: "",
       after: "",
@@ -127,6 +129,9 @@
       const body = m[3]!.trim();
       switch (heading) {
         case "subsystem": out.subsystem = body; break;
+        case "layers":
+        case "stack":
+        case "call path": out.layers = body; break;
         case "intent": out.intent = body; break;
         case "before": out.before = body; break;
         case "after": out.after = body; break;
@@ -249,6 +254,14 @@
           <h4 class="brief__section-title">Subsystem</h4>
           <div class="brief__section-body markdown-body">
             {@html renderMarkdown(sections.subsystem, repoCtx)}
+          </div>
+        </section>
+      {/if}
+      {#if sections.layers}
+        <section class="brief__section">
+          <h4 class="brief__section-title">Layers</h4>
+          <div class="brief__section-body markdown-body">
+            {@html renderMarkdown(sections.layers, repoCtx)}
           </div>
         </section>
       {/if}
