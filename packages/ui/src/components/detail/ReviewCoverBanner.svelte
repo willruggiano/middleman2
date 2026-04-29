@@ -131,16 +131,26 @@
     font-size: 13px;
     line-height: 1.55;
     color: var(--text-primary);
-    /* Cap prose width for readability — past ~80ch, eye-tracking
-       degrades. Matches GitHub/Gerrit/GitLab convention. */
+  }
+
+  /* Cap readability on prose elements only; fenced code, tables,
+     and log lines (which authors paste verbatim) keep full width
+     because alignment and scanning matter more than line length
+     for those. Past ~80ch prose loses eye-tracking; code doesn't. */
+  .review-cover__body :global(p),
+  .review-cover__body :global(ul),
+  .review-cover__body :global(ol),
+  .review-cover__body :global(blockquote),
+  .review-cover__body :global(h1),
+  .review-cover__body :global(h2),
+  .review-cover__body :global(h3),
+  .review-cover__body :global(h4),
+  .review-cover__body :global(h5),
+  .review-cover__body :global(h6) {
     max-width: 80ch;
   }
 
-  /* Fenced code blocks (commit excerpts, diagrams) escape the prose
-     column constraint by scrolling horizontally, never wrapping —
-     wrapped code is harder to read than scrolled code. */
   .review-cover__body :global(pre) {
-    max-width: 100%;
     overflow-x: auto;
   }
 

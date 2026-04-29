@@ -592,22 +592,29 @@
     font-size: 13px;
     color: var(--text-primary);
     line-height: 1.5;
-    /* Cap prose width for readability; review UIs (GitHub, Gerrit,
-       GitLab) all converge on a ~720–800px column for descriptions
-       and prose. Past ~80ch, line-tracking degrades. The Before/After
-       split sections are already half-width per side, so the cap
-       only bites in single-column sections (Subsystem, Intent,
-       Mechanics, Commits, Risk surface, Open questions). */
+  }
+
+  /* Cap prose readability at ~80ch on the prose elements only.
+     Code blocks, tables, and ASCII diagrams keep full width because
+     wrapping them is worse than letting them be wide — alignment
+     matters for diagrams and scanning matters for logs/code. */
+  .brief__section-body :global(p),
+  .brief__section-body :global(ul),
+  .brief__section-body :global(ol),
+  .brief__section-body :global(blockquote),
+  .brief__section-body :global(h1),
+  .brief__section-body :global(h2),
+  .brief__section-body :global(h3),
+  .brief__section-body :global(h4),
+  .brief__section-body :global(h5),
+  .brief__section-body :global(h6) {
     max-width: 80ch;
   }
 
-  /* Fenced code blocks — Mechanics pseudocode, ASCII diagrams in
-     Before/After, code excerpts in Commits — scroll horizontally
-     within the prose column rather than wrap. Wrapped code reads
-     worse than scrolled code, and the visual diagrams Claude
-     produces depend on alignment. */
+  /* <pre> still scrolls horizontally for the rare case where a
+     single fenced line exceeds the container; full-width is the
+     starting point. */
   .brief__section-body :global(pre) {
-    max-width: 100%;
     overflow-x: auto;
   }
 
