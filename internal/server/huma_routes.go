@@ -523,11 +523,15 @@ func (s *Server) listPulls(ctx context.Context, input *listPullsInput) (*listPul
 		return nil, huma.Error500InternalServerError("load review authors failed")
 	}
 
-	// Per-PR review state for the configured viewer. Best-effort:
-	// when the viewer login isn't cached yet (no /me call has
-	// landed), the call returns "unreviewed" for every row and the
-	// frontend will pick up real state on the next list refresh.
-	viewer := s.viewerLoginCached()
+	// Per-PR review state for the configured viewer. Resolve the
+	// viewer eagerly on cache miss (one round-trip to GitHub per
+	// server lifetime) so the first /pulls after a server restart
+	// returns real state instead of "unreviewed" for everything,
+	// which would otherwise let the legacy "REVIEW" chip fall
+	// through on PRs the viewer had already reviewed. If GitHub
+	// is unreachable we proceed with empty viewer; the frontend
+	// is still polling and will recover on the next list refresh.
+	viewer, _, _ := s.resolveViewer(ctx)
 	states, _ := s.db.ReviewStatesForMRs(ctx, mrIDs, viewer)
 
 	out := make([]mergeRequestResponse, 0, len(mrs))
@@ -2078,34 +2082,48 @@ type getViewerOutput struct {
 // configured in middleman. Cached after the first call so this is
 // effectively free on subsequent hits.
 func (s *Server) getViewer(ctx context.Context, _ *struct{}) (*getViewerOutput, error) {
+	login, name, err := s.resolveViewer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &getViewerOutput{Body: viewerResponse{Login: login, Name: name}}, nil
+}
+
+// resolveViewer returns the viewer login + name, fetching from
+// GitHub on a cache miss. Other handlers (listPulls) call this so
+// viewer-relative state is available on the first /pulls response
+// even when the frontend hasn't hit /me yet — closes a startup race
+// where the initial /pulls would otherwise return empty review_state
+// for every row and the sidebar would fall back to the legacy
+// "REVIEW" chip on PRs the viewer had already reviewed.
+func (s *Server) resolveViewer(ctx context.Context) (login, name string, err error) {
 	s.viewerMu.Lock()
 	if s.viewerLogin != "" {
-		resp := viewerResponse{Login: s.viewerLogin, Name: s.viewerName}
+		login, name = s.viewerLogin, s.viewerName
 		s.viewerMu.Unlock()
-		return &getViewerOutput{Body: resp}, nil
+		return login, name, nil
 	}
 	s.viewerMu.Unlock()
 
-	client, err := s.syncer.PrimaryClient()
-	if err != nil {
-		return nil, huma.Error503ServiceUnavailable("viewer not available: " + err.Error())
+	client, cerr := s.syncer.PrimaryClient()
+	if cerr != nil {
+		return "", "", huma.Error503ServiceUnavailable("viewer not available: " + cerr.Error())
 	}
-	user, err := client.GetUser(ctx, "")
-	if err != nil {
-		return nil, huma.Error502BadGateway("fetch viewer: " + err.Error())
+	user, uerr := client.GetUser(ctx, "")
+	if uerr != nil {
+		return "", "", huma.Error502BadGateway("fetch viewer: " + uerr.Error())
 	}
-	login := user.GetLogin()
+	login = user.GetLogin()
 	if login == "" {
-		return nil, huma.Error502BadGateway("viewer response missing login")
+		return "", "", huma.Error502BadGateway("viewer response missing login")
 	}
-	name := user.GetName()
+	name = user.GetName()
 
 	s.viewerMu.Lock()
 	s.viewerLogin = login
 	s.viewerName = name
 	s.viewerMu.Unlock()
-
-	return &getViewerOutput{Body: viewerResponse{Login: login, Name: name}}, nil
+	return login, name, nil
 }
 
 // --- Blob range (context expansion) ---
