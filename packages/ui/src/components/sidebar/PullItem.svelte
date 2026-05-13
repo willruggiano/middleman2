@@ -163,7 +163,7 @@
     {:else if reviewState === "reviewed"}
       <span class="review-chip review-chip--reviewed" title="You reviewed this; no changes from the author since">✓ reviewed</span>
     {:else if awaitingMyReview}
-      <span class="review-chip" title="You're on the reviewer list">review</span>
+      <span class="review-chip" title="A review from you has been requested">requested</span>
     {/if}
     {pr.Title}
   </p>
