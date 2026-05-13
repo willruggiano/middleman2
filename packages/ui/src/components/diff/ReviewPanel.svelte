@@ -12,7 +12,7 @@
 
   const { owner, name, number, onclose }: Props = $props();
 
-  const { diff: diffStore } = getStores();
+  const { diff: diffStore, pulls: pullsStore } = getStores();
   const client = getClient();
 
   // Draft the user is about to publish. Read once on open to snapshot;
@@ -106,6 +106,14 @@
         return;
       }
       diffStore.clearDraft();
+      // Submit handler writes the review event to the DB
+      // synchronously before responding, so a refetch right now
+      // picks up the new "reviewed" state without waiting on the
+      // 60s safety-net poll or a sync-complete event. Fire-and-
+      // forget — close the panel immediately so the action feels
+      // instant; the next render flips the chip when the refetch
+      // lands.
+      void pullsStore.loadPulls();
       onclose();
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : String(err);
