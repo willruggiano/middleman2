@@ -52,3 +52,18 @@ func (m *Manager) BlobRange(
 	}
 	return lines[start-1 : end], nil
 }
+
+// Blob returns the entire file at sha as raw bytes. Used by the
+// rendered-markdown view; we want the whole file, not a slice.
+// Returns ErrNotFound when the path doesn't exist at the SHA.
+func (m *Manager) Blob(
+	ctx context.Context,
+	host, owner, name, sha, path string,
+) ([]byte, error) {
+	dir := m.ClonePath(host, owner, name)
+	out, err := m.git(ctx, host, dir, "cat-file", "-p", sha+":"+path)
+	if err != nil {
+		return nil, fmt.Errorf("cat-file %s:%s: %w", sha, path, err)
+	}
+	return out, nil
+}

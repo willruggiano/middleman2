@@ -13,6 +13,7 @@
   import AIAskComposer from "./AIAskComposer.svelte";
   import AIThreadCard from "./AIThreadCard.svelte";
   import ReviewCommentCard from "./ReviewCommentCard.svelte";
+  import RenderedMarkdownView from "./RenderedMarkdownView.svelte";
   import type { DraftComment } from "../../stores/diff.svelte.js";
   import type { PublishedReviewComment } from "../../stores/detail.svelte.js";
 
@@ -28,6 +29,37 @@
   const collapsed = $derived(diffStore.isFileCollapsed(owner, name, number, file.path));
   const lang = $derived(langFromPath(file.path));
   const layout = $derived(diffStore.getLayout());
+
+  // Markdown files get an optional "Rendered" view alongside the
+  // standard "Diff" view. Local toggle state so each file's mode is
+  // independent and resets to "diff" when the component remounts
+  // (which happens on PR / scope change). Reviewers spend most time
+  // in Diff; Rendered is the optional second view.
+  const isMarkdown = $derived.by<boolean>(() => {
+    const p = file.path.toLowerCase();
+    return p.endsWith(".md") || p.endsWith(".mdx") || p.endsWith(".markdown");
+  });
+  let viewMode = $state<"diff" | "rendered">("diff");
+
+  // Which SHA's tree to render the file from. For deleted files we
+  // render the "before" tree (old_path / merge_base side); for
+  // everything else we render the file at the current diff scope's
+  // tree so the rendered view tracks what the reviewer is looking
+  // at in the diff body.
+  const renderedSHA = $derived.by<string>(() => {
+    if (file.status === "deleted") {
+      // Best-effort: there's no per-file old-side SHA on the diff
+      // response, so fall back to the merge-base when we have it.
+      // commits is newest-first; the oldest's parent isn't exposed
+      // either. Empty SHA → component shows an error message and
+      // the reviewer can still read the diff body for old content.
+      return "";
+    }
+    return currentCommitSha();
+  });
+  const renderedPath = $derived(
+    file.status === "deleted" ? (file.old_path || file.path) : file.path,
+  );
   const viewed = $derived(diffStore.isFileReviewed(file.path));
 
   function toggleViewed(e: Event): void {
@@ -594,6 +626,28 @@
         <span class="stat" class:stat--del={file.deletions > 0} class:stat--dim={file.deletions === 0}>-{file.deletions}</span>
       </span>
     </button>
+    {#if isMarkdown}
+      <div class="file-header__viewmode" role="tablist" aria-label="View mode">
+        <button
+          type="button"
+          class="vm-btn"
+          class:vm-btn--active={viewMode === "diff"}
+          onclick={() => (viewMode = "diff")}
+          role="tab"
+          aria-selected={viewMode === "diff"}
+          title="Show the unified or split diff"
+        >Diff</button>
+        <button
+          type="button"
+          class="vm-btn"
+          class:vm-btn--active={viewMode === "rendered"}
+          onclick={() => (viewMode = "rendered")}
+          role="tab"
+          aria-selected={viewMode === "rendered"}
+          title="Show the file rendered as Markdown at this diff scope's tree"
+        >Rendered</button>
+      </div>
+    {/if}
     <label class="file-header__viewed" title={viewed ? "Mark as not viewed" : "Mark as viewed"}>
       <input
         type="checkbox"
@@ -603,7 +657,21 @@
       <span>Viewed</span>
     </label>
   </div>
-  {#if !collapsed}
+  {#if !collapsed && isMarkdown && viewMode === "rendered"}
+    <div class="file-content">
+      <RenderedMarkdownView
+        {owner}
+        {name}
+        {number}
+        path={renderedPath}
+        sha={renderedSHA}
+        hunks={(file.hunks ?? []).map((h: DiffHunk) => ({
+          new_start: h.new_start,
+          new_count: h.new_count,
+        }))}
+      />
+    </div>
+  {:else if !collapsed}
     <div class="file-content">
       {#if outdatedReviewCount > 0}
         <div class="outdated-banner" title="These comments were made against an older version of this file; their line numbers don't resolve in the current diff.">
@@ -1076,6 +1144,39 @@
     font-weight: 600;
     min-width: 3.5ch;
     text-align: right;
+  }
+
+  /* "Diff | Rendered" pair on .md/.mdx/.markdown files. Sits next
+     to the Viewed checkbox in the file header. Quiet at rest; the
+     active tab is highlighted with the same accent the file path
+     uses elsewhere so it doesn't shout. */
+  .file-header__viewmode {
+    display: inline-flex;
+    gap: 0;
+    margin-left: auto;
+    margin-right: 12px;
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--bg-surface);
+  }
+
+  .vm-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+  }
+  .vm-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-surface-hover);
+  }
+  .vm-btn--active {
+    color: #fff;
+    background: var(--accent-blue);
   }
 
   .stat--add {

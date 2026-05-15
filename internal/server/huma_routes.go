@@ -419,6 +419,7 @@ func (s *Server) registerAPI(api huma.API) {
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/diff", s.getDiff)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/files", s.getFiles)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/blob-range", s.getBlobRange)
+	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/blob", s.getBlob)
 	huma.Post(api, "/repos/{owner}/{name}/resolve-files", s.resolveFiles)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.getPRNotes)
 	huma.Put(api, "/repos/{owner}/{name}/pulls/{number}/notes", s.putPRNotes)
@@ -2196,6 +2197,62 @@ func (s *Server) getBlobRange(ctx context.Context, input *getBlobRangeInput) (*g
 		return nil, huma.Error502BadGateway("read blob: " + err.Error())
 	}
 	return &getBlobRangeOutput{Body: blobRangeResponse{Lines: lines}}, nil
+}
+
+// --- Full blob (for rendered file views, e.g. markdown) ---
+
+// blobMaxBytes caps the size of a single full-file fetch. Markdown
+// files in practice are tiny; this is here to keep a malicious or
+// pathological 100 MB blob from sailing through.
+const blobMaxBytes = 2 * 1024 * 1024 // 2 MB
+
+type getBlobInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+	Path   string `query:"path" doc:"File path within the repo"`
+	SHA    string `query:"sha"  doc:"Commit/tree SHA whose blob to read"`
+}
+
+type getBlobOutput struct {
+	Body blobResponse
+}
+
+type blobResponse struct {
+	Content   string `json:"content" doc:"Raw file content (UTF-8). Truncated empty + truncated=true when oversized."`
+	Truncated bool   `json:"truncated"`
+}
+
+// getBlob returns the entire file at the given SHA. The rendered-
+// markdown view in the diff sidebar fetches this; pages with raw
+// content can read it directly too. PR-scoped for auth coherence
+// with /diff, /files, etc.
+func (s *Server) getBlob(ctx context.Context, input *getBlobInput) (*getBlobOutput, error) {
+	if s.clones == nil {
+		return nil, huma.Error503ServiceUnavailable("blob not available: clone manager not configured")
+	}
+	if input.Path == "" {
+		return nil, huma.Error400BadRequest("path is required")
+	}
+	if input.SHA == "" {
+		return nil, huma.Error400BadRequest("sha is required")
+	}
+	if _, err := s.db.GetMRIDByRepoAndNumber(ctx, input.Owner, input.Name, input.Number); err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+
+	host := s.syncer.HostForRepo(input.Owner, input.Name)
+	raw, err := s.clones.Blob(ctx, host, input.Owner, input.Name, input.SHA, input.Path)
+	if err != nil {
+		if errors.Is(err, gitclone.ErrNotFound) {
+			return nil, huma.Error404NotFound("blob not found: " + err.Error())
+		}
+		return nil, huma.Error502BadGateway("read blob: " + err.Error())
+	}
+	if len(raw) > blobMaxBytes {
+		return &getBlobOutput{Body: blobResponse{Truncated: true}}, nil
+	}
+	return &getBlobOutput{Body: blobResponse{Content: string(raw)}}, nil
 }
 
 // --- Filename resolution (for AI prose linkification) ---

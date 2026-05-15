@@ -6418,7 +6418,13 @@ func TestDisplayNameCacheE2E(t *testing.T) {
 			}}, nil
 		},
 		getUserFn: func(_ context.Context, login string) (*gh.User, error) {
-			getUserCalls++
+			// Viewer resolution (login=="") is a distinct call shape
+			// from display-name lookups; the cache assertions below
+			// only care about the latter, so ignore the empty-login
+			// case which listPulls makes on cache miss.
+			if login != "" {
+				getUserCalls++
+			}
 			return &gh.User{Login: &login, Name: &displayName}, nil
 		},
 	}

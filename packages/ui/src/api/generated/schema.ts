@@ -412,6 +412,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/blob": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number blob */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-blob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/blob-range": {
         parameters: {
             query?: never;
@@ -1058,6 +1075,17 @@ export interface components {
              */
             readonly $schema?: string;
             lines: string[] | null;
+        };
+        BlobResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/BlobResponse.json
+             */
+            readonly $schema?: string;
+            /** @description Raw file content (UTF-8). Truncated empty + truncated=true when oversized. */
+            content: string;
+            truncated: boolean;
         };
         CommentAutocompleteReference: {
             kind: string;
@@ -2995,6 +3023,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActionStatusBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-blob": {
+        parameters: {
+            query?: {
+                /** @description File path within the repo */
+                path?: string;
+                /** @description Commit/tree SHA whose blob to read */
+                sha?: string;
+            };
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BlobResponse"];
                 };
             };
             /** @description Error */
