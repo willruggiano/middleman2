@@ -367,7 +367,7 @@
           </aside>
           <div class="files-main">
             <ReviewCoverBanner {pr} {owner} {name} />
-            <CommitMessageBanner {number} />
+            <CommitMessageBanner {owner} {name} {number} />
             <PatchsetPicker />
             <ReviewBriefCard {owner} {name} {number} />
             <DiffView {owner} {name} {number} />

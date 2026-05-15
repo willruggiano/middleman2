@@ -79,6 +79,9 @@
     createFileResolverStore,
   } from "./stores/fileResolver.svelte.js";
   import {
+    createCommitAnalysisStore,
+  } from "./stores/commitAnalysis.svelte.js";
+  import {
     createAuthorGroupsStore,
   } from "./stores/authorGroups.svelte.js";
   import { createViewerStore } from "./stores/viewer.svelte.js";
@@ -227,6 +230,9 @@
     const fileResolverStore = createFileResolverStore({
       ...(cfg.basePath != null && { getBasePath: () => cfg.basePath as string }),
     });
+    const commitAnalysisStore = createCommitAnalysisStore({
+      ...(cfg.basePath != null && { getBasePath: () => cfg.basePath as string }),
+    });
 
     const authorGroupsStore = createAuthorGroupsStore({ client: cl });
     void authorGroupsStore.load();
@@ -259,6 +265,7 @@
       viewer: viewerStore,
       aiSessions: aiSessionsStore,
       fileResolver: fileResolverStore,
+      commitAnalysis: commitAnalysisStore,
     };
 
     if (roborevBase) {

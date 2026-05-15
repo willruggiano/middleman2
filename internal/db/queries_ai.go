@@ -734,6 +734,165 @@ func scanAIBrief(row scanner) (AIBrief, error) {
 	return b, nil
 }
 
+// --- AICommitAnalysis ---
+
+// AICommitAnalysis is Claude's per-commit review guide. One row per
+// (mr_id, commit_sha): regenerating replaces in place. Commits are
+// immutable so the analysis is permanently cache-able; we still key
+// on mr_id because the surrounding-commit context (Sequence section)
+// depends on the PR's other commits.
+type AICommitAnalysis struct {
+	ID              int64
+	MergeRequestID  int64
+	CommitSHA       string
+	ClaudeSessionID *string
+	WorktreePath    *string
+	Status          string // queued | running | done | failed | cancelled
+	Content         string
+	Error           string
+	PID             *int
+	CreatedAt       time.Time
+	StartedAt       *time.Time
+	CompletedAt     *time.Time
+}
+
+func (d *DB) UpsertAICommitAnalysisQueued(ctx context.Context, mrID int64, commitSHA string) (AICommitAnalysis, error) {
+	tx, err := d.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return AICommitAnalysis{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM middleman_ai_commit_analyses WHERE mr_id = ? AND commit_sha = ?`,
+		mrID, commitSHA,
+	); err != nil {
+		return AICommitAnalysis{}, fmt.Errorf("drop existing commit analysis: %w", err)
+	}
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO middleman_ai_commit_analyses (mr_id, commit_sha) VALUES (?, ?)`,
+		mrID, commitSHA,
+	)
+	if err != nil {
+		return AICommitAnalysis{}, fmt.Errorf("insert commit analysis: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return AICommitAnalysis{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AICommitAnalysis{}, err
+	}
+	return d.GetAICommitAnalysis(ctx, id)
+}
+
+func (d *DB) GetAICommitAnalysis(ctx context.Context, id int64) (AICommitAnalysis, error) {
+	return scanAICommitAnalysis(d.ro.QueryRowContext(ctx,
+		`SELECT id, mr_id, commit_sha, claude_session_id, worktree_path,
+		        status, content, error, pid,
+		        created_at, started_at, completed_at
+		   FROM middleman_ai_commit_analyses WHERE id = ?`, id))
+}
+
+// GetAICommitAnalysisForCommit returns the analysis for the given
+// (mr_id, commit_sha). Used by the UI's per-commit "Analyze" surface
+// to check whether a guide has already been generated.
+func (d *DB) GetAICommitAnalysisForCommit(ctx context.Context, mrID int64, commitSHA string) (AICommitAnalysis, error) {
+	return scanAICommitAnalysis(d.ro.QueryRowContext(ctx,
+		`SELECT id, mr_id, commit_sha, claude_session_id, worktree_path,
+		        status, content, error, pid,
+		        created_at, started_at, completed_at
+		   FROM middleman_ai_commit_analyses
+		  WHERE mr_id = ? AND commit_sha = ?`, mrID, commitSHA))
+}
+
+func (d *DB) MarkAICommitAnalysisRunning(ctx context.Context, id int64, pid int, sessionID, worktreePath string) error {
+	_, err := d.rw.ExecContext(ctx,
+		`UPDATE middleman_ai_commit_analyses
+		    SET status = 'running', pid = ?,
+		        claude_session_id = ?, worktree_path = ?,
+		        started_at = datetime('now')
+		  WHERE id = ?`,
+		pid, sessionID, worktreePath, id,
+	)
+	return err
+}
+
+func (d *DB) MarkAICommitAnalysisDone(ctx context.Context, id int64, content string) error {
+	_, err := d.rw.ExecContext(ctx,
+		`UPDATE middleman_ai_commit_analyses
+		    SET status = 'done', content = ?, pid = NULL,
+		        completed_at = datetime('now')
+		  WHERE id = ?`,
+		content, id,
+	)
+	return err
+}
+
+func (d *DB) MarkAICommitAnalysisFailed(ctx context.Context, id int64, errMsg string) error {
+	_, err := d.rw.ExecContext(ctx,
+		`UPDATE middleman_ai_commit_analyses
+		    SET status = 'failed', error = ?, pid = NULL,
+		        completed_at = datetime('now')
+		  WHERE id = ?`,
+		errMsg, id,
+	)
+	return err
+}
+
+func (d *DB) MarkAICommitAnalysisCancelled(ctx context.Context, id int64) error {
+	_, err := d.rw.ExecContext(ctx,
+		`UPDATE middleman_ai_commit_analyses
+		    SET status = 'cancelled', pid = NULL,
+		        completed_at = datetime('now')
+		  WHERE id = ? AND status IN ('queued', 'running')`,
+		id,
+	)
+	return err
+}
+
+func (d *DB) DeleteAICommitAnalysis(ctx context.Context, id int64) error {
+	_, err := d.rw.ExecContext(ctx,
+		`DELETE FROM middleman_ai_commit_analyses WHERE id = ?`, id,
+	)
+	return err
+}
+
+func scanAICommitAnalysis(row scanner) (AICommitAnalysis, error) {
+	var a AICommitAnalysis
+	var sessionID, worktree sql.NullString
+	var pid sql.NullInt64
+	var startedAt, completedAt sql.NullTime
+	err := row.Scan(
+		&a.ID, &a.MergeRequestID, &a.CommitSHA, &sessionID, &worktree,
+		&a.Status, &a.Content, &a.Error, &pid,
+		&a.CreatedAt, &startedAt, &completedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AICommitAnalysis{}, err
+		}
+		return AICommitAnalysis{}, fmt.Errorf("scan commit analysis: %w", err)
+	}
+	if sessionID.Valid {
+		a.ClaudeSessionID = &sessionID.String
+	}
+	if worktree.Valid {
+		a.WorktreePath = &worktree.String
+	}
+	if pid.Valid {
+		v := int(pid.Int64)
+		a.PID = &v
+	}
+	if startedAt.Valid {
+		a.StartedAt = &startedAt.Time
+	}
+	if completedAt.Valid {
+		a.CompletedAt = &completedAt.Time
+	}
+	return a, nil
+}
+
 func intPtrToNullable(p *int) any {
 	if p == nil {
 		return nil

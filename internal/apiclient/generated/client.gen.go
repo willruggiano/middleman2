@@ -74,6 +74,21 @@ type AiBriefResponse struct {
 	Status          string     `json:"status"`
 }
 
+// AiCommitAnalysisResponse defines model for AiCommitAnalysisResponse.
+type AiCommitAnalysisResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string    `json:"$schema,omitempty"`
+	CommitSha   string     `json:"commit_sha"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	Content     string     `json:"content"`
+	CreatedAt   time.Time  `json:"created_at"`
+	Error       *string    `json:"error,omitempty"`
+	Id          int64      `json:"id"`
+	MrId        int64      `json:"mr_id"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	Status      string     `json:"status"`
+}
+
 // AiQuestionResponse defines model for AiQuestionResponse.
 type AiQuestionResponse struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -1299,6 +1314,15 @@ type ClientInterface interface {
 	// GetReposByOwnerByNamePullsByNumberCommits request
 	GetReposByOwnerByNamePullsByNumberCommits(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DeleteAiCommitAnalysis request
+	DeleteAiCommitAnalysis(ctx context.Context, owner string, name string, number int64, sha string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyze request
+	GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyze(ctx context.Context, owner string, name string, number int64, sha string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyze request
+	PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyze(ctx context.Context, owner string, name string, number int64, sha string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetReposByOwnerByNamePullsByNumberDiff request
 	GetReposByOwnerByNamePullsByNumberDiff(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberDiffParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1905,6 +1929,42 @@ func (c *Client) PostPrComment(ctx context.Context, owner string, name string, n
 
 func (c *Client) GetReposByOwnerByNamePullsByNumberCommits(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReposByOwnerByNamePullsByNumberCommitsRequest(c.Server, owner, name, number)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteAiCommitAnalysis(ctx context.Context, owner string, name string, number int64, sha string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteAiCommitAnalysisRequest(c.Server, owner, name, number, sha)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyze(ctx context.Context, owner string, name string, number int64, sha string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeRequest(c.Server, owner, name, number, sha)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyze(ctx context.Context, owner string, name string, number int64, sha string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeRequest(c.Server, owner, name, number, sha)
 	if err != nil {
 		return nil, err
 	}
@@ -4317,6 +4377,171 @@ func NewGetReposByOwnerByNamePullsByNumberCommitsRequest(server string, owner st
 	return req, nil
 }
 
+// NewDeleteAiCommitAnalysisRequest generates requests for DeleteAiCommitAnalysis
+func NewDeleteAiCommitAnalysisRequest(server string, owner string, name string, number int64, sha string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "sha", sha, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/commits/%s/analyze", pathParam0, pathParam1, pathParam2, pathParam3)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeRequest generates requests for GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyze
+func NewGetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeRequest(server string, owner string, name string, number int64, sha string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "sha", sha, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/commits/%s/analyze", pathParam0, pathParam1, pathParam2, pathParam3)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeRequest generates requests for PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyze
+func NewPostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeRequest(server string, owner string, name string, number int64, sha string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "sha", sha, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/commits/%s/analyze", pathParam0, pathParam1, pathParam2, pathParam3)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetReposByOwnerByNamePullsByNumberDiffRequest generates requests for GetReposByOwnerByNamePullsByNumberDiff
 func NewGetReposByOwnerByNamePullsByNumberDiffRequest(server string, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberDiffParams) (*http.Request, error) {
 	var err error
@@ -5667,6 +5892,15 @@ type ClientWithResponsesInterface interface {
 	// GetReposByOwnerByNamePullsByNumberCommitsWithResponse request
 	GetReposByOwnerByNamePullsByNumberCommitsWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberCommitsResponse, error)
 
+	// DeleteAiCommitAnalysisWithResponse request
+	DeleteAiCommitAnalysisWithResponse(ctx context.Context, owner string, name string, number int64, sha string, reqEditors ...RequestEditorFn) (*DeleteAiCommitAnalysisResponse, error)
+
+	// GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeWithResponse request
+	GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeWithResponse(ctx context.Context, owner string, name string, number int64, sha string, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse, error)
+
+	// PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeWithResponse request
+	PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeWithResponse(ctx context.Context, owner string, name string, number int64, sha string, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse, error)
+
 	// GetReposByOwnerByNamePullsByNumberDiffWithResponse request
 	GetReposByOwnerByNamePullsByNumberDiffWithResponse(ctx context.Context, owner string, name string, number int64, params *GetReposByOwnerByNamePullsByNumberDiffParams, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberDiffResponse, error)
 
@@ -6527,6 +6761,74 @@ func (r GetReposByOwnerByNamePullsByNumberCommitsResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetReposByOwnerByNamePullsByNumberCommitsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteAiCommitAnalysisResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteAiCommitAnalysisResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteAiCommitAnalysisResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *AiCommitAnalysisResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *AiCommitAnalysisResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7441,6 +7743,33 @@ func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberCommitsWithRespo
 		return nil, err
 	}
 	return ParseGetReposByOwnerByNamePullsByNumberCommitsResponse(rsp)
+}
+
+// DeleteAiCommitAnalysisWithResponse request returning *DeleteAiCommitAnalysisResponse
+func (c *ClientWithResponses) DeleteAiCommitAnalysisWithResponse(ctx context.Context, owner string, name string, number int64, sha string, reqEditors ...RequestEditorFn) (*DeleteAiCommitAnalysisResponse, error) {
+	rsp, err := c.DeleteAiCommitAnalysis(ctx, owner, name, number, sha, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteAiCommitAnalysisResponse(rsp)
+}
+
+// GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeWithResponse request returning *GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse
+func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeWithResponse(ctx context.Context, owner string, name string, number int64, sha string, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse, error) {
+	rsp, err := c.GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyze(ctx, owner, name, number, sha, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse(rsp)
+}
+
+// PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeWithResponse request returning *PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeWithResponse(ctx context.Context, owner string, name string, number int64, sha string, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyze(ctx, owner, name, number, sha, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse(rsp)
 }
 
 // GetReposByOwnerByNamePullsByNumberDiffWithResponse request returning *GetReposByOwnerByNamePullsByNumberDiffResponse
@@ -8799,6 +9128,98 @@ func ParseGetReposByOwnerByNamePullsByNumberCommitsResponse(rsp *http.Response) 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest CommitsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteAiCommitAnalysisResponse parses an HTTP response from a DeleteAiCommitAnalysisWithResponse call
+func ParseDeleteAiCommitAnalysisResponse(rsp *http.Response) (*DeleteAiCommitAnalysisResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteAiCommitAnalysisResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse parses an HTTP response from a GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeWithResponse call
+func ParseGetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse(rsp *http.Response) (*GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AiCommitAnalysisResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse parses an HTTP response from a PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeWithResponse call
+func ParsePostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse(rsp *http.Response) (*PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostReposByOwnerByNamePullsByNumberCommitsByShaAnalyzeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AiCommitAnalysisResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

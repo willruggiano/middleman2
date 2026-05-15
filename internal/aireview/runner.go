@@ -58,9 +58,10 @@ type Runner struct {
 
 	briefPromptFile string
 
-	mu            sync.Mutex
-	running       map[int64]context.CancelFunc // questionID -> cancel
-	briefsRunning map[int64]context.CancelFunc // briefID -> cancel
+	mu                  sync.Mutex
+	running             map[int64]context.CancelFunc // questionID -> cancel
+	briefsRunning       map[int64]context.CancelFunc // briefID -> cancel
+	commitAnalysisRunning map[int64]context.CancelFunc // commit-analysis ID -> cancel
 }
 
 // RunnerConfig holds dependencies for a Runner.
@@ -86,8 +87,9 @@ func New(cfg RunnerConfig) *Runner {
 		rootDir:         cfg.WorktreeDir,
 		hostFor:         cfg.HostFor,
 		briefPromptFile: cfg.BriefPromptFile,
-		running:         make(map[int64]context.CancelFunc),
-		briefsRunning:   make(map[int64]context.CancelFunc),
+		running:               make(map[int64]context.CancelFunc),
+		briefsRunning:         make(map[int64]context.CancelFunc),
+		commitAnalysisRunning: make(map[int64]context.CancelFunc),
 	}
 }
 
@@ -870,6 +872,208 @@ Rules:
 - Don't restate what an earlier section already covered.
 - A short brief is correct, not lazy. Padding is worse than omitting.`
 
+// --- AICommitAnalysis (per-commit review guide) ---
+
+// CommitAnalysisInput describes the commit we're analyzing. The runner
+// already has the worktree + commit cache infrastructure used for the
+// PR brief; commit analysis reuses both via provisionWorktree at the
+// commit's SHA.
+type CommitAnalysisInput struct {
+	MergeRequestID int64
+	Owner          string
+	Name           string
+	CommitSHA      string
+	// PRMergeBaseSHA / PRHeadSHA define the PR's full range so the
+	// per-commit cache can be populated for the Sequence section
+	// (which references neighbouring commits).
+	PRMergeBaseSHA string
+	PRHeadSHA      string
+	// PromptContext is free-form preamble (PR title, branch, etc.)
+	// inserted into the prompt above the commit's identity.
+	PromptContext string
+}
+
+// CreateCommitAnalysis queues a per-commit analysis row and spawns
+// Claude asynchronously. Mirrors CreateBrief but keyed on
+// (mr_id, commit_sha) instead of (mr_id, head_sha) and uses the
+// commit-analysis prompt.
+func (r *Runner) CreateCommitAnalysis(ctx context.Context, in CommitAnalysisInput) (db.AICommitAnalysis, error) {
+	if r.clones == nil {
+		return db.AICommitAnalysis{}, errors.New("clone manager not configured")
+	}
+	if in.CommitSHA == "" {
+		return db.AICommitAnalysis{}, errors.New("commit SHA required")
+	}
+	row, err := r.db.UpsertAICommitAnalysisQueued(ctx, in.MergeRequestID, in.CommitSHA)
+	if err != nil {
+		return db.AICommitAnalysis{}, err
+	}
+	worktree, err := r.provisionWorktree(ctx, in.Owner, in.Name, in.CommitSHA, commitAnalysisWorktreeKey(row.ID))
+	if err != nil {
+		_ = r.db.MarkAICommitAnalysisFailed(ctx, row.ID, "provision worktree: "+err.Error())
+		return db.AICommitAnalysis{}, fmt.Errorf("provision worktree: %w", err)
+	}
+	cachedShas := r.cachePRCommits(ctx, in.Owner, in.Name, worktree, in.PRMergeBaseSHA, in.PRHeadSHA)
+	r.spawnCommitAnalysis(row, worktree, in, cachedShas)
+	row.WorktreePath = &worktree
+	return row, nil
+}
+
+func (r *Runner) CancelCommitAnalysis(ctx context.Context, id int64) error {
+	r.mu.Lock()
+	cancel, ok := r.commitAnalysisRunning[id]
+	r.mu.Unlock()
+	if ok {
+		cancel()
+	}
+	return r.db.MarkAICommitAnalysisCancelled(ctx, id)
+}
+
+func (r *Runner) DeleteCommitAnalysis(ctx context.Context, id int64) error {
+	_ = r.CancelCommitAnalysis(ctx, id)
+	row, err := r.db.GetAICommitAnalysis(ctx, id)
+	if err == nil && row.WorktreePath != nil && *row.WorktreePath != "" {
+		r.removeWorktree(ctx, "", "", *row.WorktreePath)
+	}
+	return r.db.DeleteAICommitAnalysis(ctx, id)
+}
+
+// commitAnalysisWorktreeKey keeps commit-analysis worktrees in a
+// distinct numeric range from thread / brief worktrees so they
+// can't collide on the shared rootDir.
+func commitAnalysisWorktreeKey(id int64) int64 {
+	return 2_000_000_000 + id
+}
+
+func (r *Runner) spawnCommitAnalysis(row db.AICommitAnalysis, worktreePath string, in CommitAnalysisInput, cachedShas []string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r.mu.Lock()
+	r.commitAnalysisRunning[row.ID] = cancel
+	r.mu.Unlock()
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			delete(r.commitAnalysisRunning, row.ID)
+			r.mu.Unlock()
+			cancel()
+		}()
+		r.runCommitAnalysis(ctx, row, worktreePath, in, cachedShas)
+	}()
+}
+
+func (r *Runner) runCommitAnalysis(
+	ctx context.Context, row db.AICommitAnalysis, worktreePath string,
+	in CommitAnalysisInput, cachedShas []string,
+) {
+	prompt := buildCommitAnalysisPrompt(in, cachedShas)
+
+	args := []string{
+		"-p", prompt,
+		"--output-format", "json",
+		"--permission-mode", "bypassPermissions",
+		"--allowedTools", "Read,Glob,Grep",
+		"--disallowedTools", "Edit,Write,NotebookEdit,Bash,Agent",
+	}
+	cmd := exec.CommandContext(ctx, claudeBinary, args...)
+	cmd.Dir = worktreePath
+	setPgid(cmd)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = r.db.MarkAICommitAnalysisFailed(ctx, row.ID, "stdout pipe: "+err.Error())
+		return
+	}
+	stderrBuf := &strings.Builder{}
+	cmd.Stderr = stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		_ = r.db.MarkAICommitAnalysisFailed(ctx, row.ID, "start claude: "+err.Error())
+		return
+	}
+	if err := r.db.MarkAICommitAnalysisRunning(ctx, row.ID, cmd.Process.Pid, "", worktreePath); err != nil {
+		slog.Warn("mark commit-analysis running failed", "id", row.ID, "err", err)
+	}
+
+	raw, readErr := readAll(stdout)
+	waitErr := cmd.Wait()
+
+	if ctx.Err() != nil {
+		return
+	}
+	if waitErr != nil {
+		msg := fmt.Sprintf("claude exited: %v", waitErr)
+		if stderrBuf.Len() > 0 {
+			msg += "\n" + strings.TrimSpace(stderrBuf.String())
+		}
+		if readErr != nil {
+			msg += "\nread: " + readErr.Error()
+		}
+		_ = r.db.MarkAICommitAnalysisFailed(ctx, row.ID, msg)
+		return
+	}
+	result, err := parseClaudeResult(raw)
+	if err != nil {
+		_ = r.db.MarkAICommitAnalysisFailed(ctx, row.ID, fmt.Sprintf("parse claude output: %v\noutput: %s", err, snippet(raw, 400)))
+		return
+	}
+	if err := r.db.MarkAICommitAnalysisDone(ctx, row.ID, result.Text); err != nil {
+		slog.Warn("mark commit-analysis done failed", "id", row.ID, "err", err)
+	}
+}
+
+// buildCommitAnalysisPrompt assembles the per-commit review-guide
+// prompt. Structure mirrors the PR brief but the section set is
+// smaller — commits are atomic, the reviewer is about to read the
+// diff, the brief just routes their attention.
+func buildCommitAnalysisPrompt(in CommitAnalysisInput, cachedShas []string) string {
+	var b strings.Builder
+	b.WriteString(commitAnalysisPromptHeader)
+	b.WriteString("\n\n")
+	if in.PromptContext != "" {
+		b.WriteString("Context:\n")
+		b.WriteString(in.PromptContext)
+		b.WriteString("\n\n")
+	}
+	b.WriteString(fmt.Sprintf("Commit SHA: %s\n", in.CommitSHA))
+	b.WriteString(commitCacheNotice(cachedShas))
+	b.WriteString(
+		"\nBash is not available. Read files directly from the working copy — it is checked out at this commit. " +
+			"Use the per-commit cache directory described above for this commit's diff and message, and for " +
+			"neighbouring commits' diffs when the Sequence section calls for them.\n",
+	)
+	return b.String()
+}
+
+const commitAnalysisPromptHeader = `You are helping a staff engineer review ONE commit inside a pull request. They will read the commit's diff immediately after this guidance. Your job is to direct their attention — name the atomic purpose, point at the file:line where the real change lives, list what to verify. Treat the diff as the territory; this guidance is the route. Fill the gaps the diff itself can't.
+
+The reviewer has breadth across the codebase and decent depth in many areas. Be terse. They are reading the diff right after this, so do not restate the diff or paraphrase the commit message.
+
+**Trivial-commit short-circuit**: if this commit is fewer than ~20 lines of substantive change (typo, comment fix, mechanical refactor with no semantic shift), output a single line — exactly ` + "`Trivial commit — read the diff.`" + ` — and stop. Do not produce sections.
+
+Otherwise, output the following Markdown sections, in this order, with headings verbatim. **Skip a section entirely (no heading, no placeholder) when its content would be empty or trivial for this commit.**
+
+## Purpose
+One sentence on the commit's atomic purpose, in your own words. If the commit subject is already a faithful summary, write ` + "`As stated.`" + ` and add nothing else.
+
+## Look here
+≤ 3 bullets. Each is a ` + "`file:line`" + ` pointer where the meaningful change lives, followed by a short phrase explaining why that line is the key. Mechanical edits, renames, formatting, and boilerplate do NOT go here.
+
+## Verify
+≤ 3 bullets. Each is a specific thing the reviewer should confirm after reading — invariants, behavior on edge cases, interactions with concurrent code, lock/error path coverage. Phrase each as a question or check, not a verdict.
+
+## Skim
+≤ 2 bullets identifying parts of the commit that are mechanical, generated, boilerplate, or otherwise low-review-value. Skip this section entirely when everything is substantive — an empty Skim section is noise.
+
+## Sequence
+One line, only when this commit is meaningfully tied to its siblings (depends on a prior commit, sets up a later one, or fixes up an earlier mistake). Cite the related commit's SHA. Skip when independent.
+
+Rules:
+- Cite ` + "`file:line`" + ` for every concrete claim.
+- One fact or one question per bullet. If a bullet contains "and" or a semicolon, split it or cut the weaker half.
+- No throat-clearing. State directly. No "this commit appears to introduce".
+- Hedge at most once per claim and only when genuinely uncertain.
+- Never produce review feedback. No "should", no approvals, no verdicts.
+- A short guide is correct, not lazy. Padding is worse than omitting.`
 
 func parseClaudeResult(raw []byte) (claudeResult, error) {
 	// Claude CLI emits a single JSON object with top-level fields

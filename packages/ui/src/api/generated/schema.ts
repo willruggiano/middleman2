@@ -462,6 +462,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{owner}/{name}/pulls/{number}/commits/{sha}/analyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get repos by owner by name pulls by number commits by sha analyze */
+        get: operations["get-repos-by-owner-by-name-pulls-by-number-commits-by-sha-analyze"];
+        put?: never;
+        /** Post repos by owner by name pulls by number commits by sha analyze */
+        post: operations["post-repos-by-owner-by-name-pulls-by-number-commits-by-sha-analyze"];
+        delete: operations["delete-ai-commit-analysis"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos/{owner}/{name}/pulls/{number}/diff": {
         parameters: {
             query?: never;
@@ -848,6 +866,28 @@ export interface components {
             depth: string;
             error?: string;
             head_sha: string;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            mr_id: number;
+            /** Format: date-time */
+            started_at?: string;
+            status: string;
+        };
+        AiCommitAnalysisResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AiCommitAnalysisResponse.json
+             */
+            readonly $schema?: string;
+            commit_sha: string;
+            /** Format: date-time */
+            completed_at?: string;
+            content: string;
+            /** Format: date-time */
+            created_at: string;
+            error?: string;
             /** Format: int64 */
             id: number;
             /** Format: int64 */
@@ -3068,6 +3108,106 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CommitsResponse"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-repos-by-owner-by-name-pulls-by-number-commits-by-sha-analyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                sha: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiCommitAnalysisResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-repos-by-owner-by-name-pulls-by-number-commits-by-sha-analyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                sha: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiCommitAnalysisResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-ai-commit-analysis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+                number: number;
+                sha: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

@@ -542,6 +542,120 @@ func (s *Server) deleteAIBrief(ctx context.Context, input *briefPathInput) (*emp
 	return &emptyOutput{}, nil
 }
 
+// --- Per-commit review guide ---
+
+type aiCommitAnalysisResponse struct {
+	ID             int64      `json:"id"`
+	MergeRequestID int64      `json:"mr_id"`
+	CommitSHA      string     `json:"commit_sha"`
+	Status         string     `json:"status"`
+	Content        string     `json:"content"`
+	Error          string     `json:"error,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+}
+
+func toCommitAnalysisResponse(a db.AICommitAnalysis) aiCommitAnalysisResponse {
+	return aiCommitAnalysisResponse{
+		ID:             a.ID,
+		MergeRequestID: a.MergeRequestID,
+		CommitSHA:      a.CommitSHA,
+		Status:         a.Status,
+		Content:        a.Content,
+		Error:          a.Error,
+		CreatedAt:      a.CreatedAt.UTC(),
+		StartedAt:      utcPtr(a.StartedAt),
+		CompletedAt:    utcPtr(a.CompletedAt),
+	}
+}
+
+type commitAnalysisPathInput struct {
+	Owner     string `path:"owner"`
+	Name      string `path:"name"`
+	Number    int    `path:"number"`
+	CommitSHA string `path:"sha"`
+}
+
+type aiCommitAnalysisOutput struct {
+	Body aiCommitAnalysisResponse
+}
+
+func (s *Server) createAICommitAnalysis(ctx context.Context, input *commitAnalysisPathInput) (*aiCommitAnalysisOutput, error) {
+	if s.aiReview == nil {
+		return nil, huma.Error503ServiceUnavailable("AI commit analysis not available: clone manager or worktree dir not configured")
+	}
+	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	if input.CommitSHA == "" {
+		return nil, huma.Error400BadRequest("commit sha required")
+	}
+
+	// PR metadata + range bounds. The PR range powers the per-commit
+	// cache (Sequence section needs neighbouring commits); the PR
+	// title/branches go into the prompt context so Claude has
+	// orientation beyond the bare commit.
+	pr, err := s.db.GetMergeRequest(ctx, input.Owner, input.Name, input.Number)
+	if err != nil || pr == nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	shas, err := s.db.GetDiffSHAs(ctx, input.Owner, input.Name, input.Number)
+	if err != nil || shas == nil {
+		return nil, huma.Error500InternalServerError("load pull request shas")
+	}
+
+	var ctxBuf strings.Builder
+	ctxBuf.WriteString(fmt.Sprintf("Repo: %s/%s\n", input.Owner, input.Name))
+	ctxBuf.WriteString(fmt.Sprintf("PR #%d: %s\n", pr.Number, pr.Title))
+	ctxBuf.WriteString(fmt.Sprintf("Branch: %s → %s\n", pr.HeadBranch, pr.BaseBranch))
+
+	row, err := s.aiReview.CreateCommitAnalysis(ctx, aireview.CommitAnalysisInput{
+		MergeRequestID: mrID,
+		Owner:          input.Owner,
+		Name:           input.Name,
+		CommitSHA:      input.CommitSHA,
+		PRMergeBaseSHA: shas.MergeBaseSHA,
+		PRHeadSHA:      shas.DiffHeadSHA,
+		PromptContext:  ctxBuf.String(),
+	})
+	if err != nil {
+		return nil, huma.Error502BadGateway("create commit analysis: " + err.Error())
+	}
+	return &aiCommitAnalysisOutput{Body: toCommitAnalysisResponse(row)}, nil
+}
+
+func (s *Server) getAICommitAnalysis(ctx context.Context, input *commitAnalysisPathInput) (*aiCommitAnalysisOutput, error) {
+	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	row, err := s.db.GetAICommitAnalysisForCommit(ctx, mrID, input.CommitSHA)
+	if err != nil {
+		return nil, huma.Error404NotFound("no analysis for this commit yet")
+	}
+	return &aiCommitAnalysisOutput{Body: toCommitAnalysisResponse(row)}, nil
+}
+
+func (s *Server) deleteAICommitAnalysis(ctx context.Context, input *commitAnalysisPathInput) (*emptyOutput, error) {
+	if s.aiReview == nil {
+		return nil, huma.Error503ServiceUnavailable("AI commit analysis not available")
+	}
+	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
+	if err != nil {
+		return nil, huma.Error404NotFound("pull request not found")
+	}
+	row, err := s.db.GetAICommitAnalysisForCommit(ctx, mrID, input.CommitSHA)
+	if err != nil {
+		return &emptyOutput{}, nil // nothing to delete; idempotent
+	}
+	if err := s.aiReview.DeleteCommitAnalysis(ctx, row.ID); err != nil {
+		return nil, huma.Error500InternalServerError("delete commit analysis: " + err.Error())
+	}
+	return &emptyOutput{}, nil
+}
+
 // runGitLogForBrief captures a compact oneline log between base and
 // head that Claude can reference without needing Bash.
 func runGitLogForBrief(ctx context.Context, cloneDir, base, head string) (string, error) {

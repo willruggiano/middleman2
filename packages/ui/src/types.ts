@@ -112,6 +112,7 @@ import type { AuthorGroupsStore } from "./stores/authorGroups.svelte.js";
 import type { ViewerStore } from "./stores/viewer.svelte.js";
 import type { AISessionsStore } from "./stores/aiSessions.svelte.js";
 import type { FileResolverStore } from "./stores/fileResolver.svelte.js";
+import type { CommitAnalysisStore } from "./stores/commitAnalysis.svelte.js";
 
 export interface StoreInstances {
   pulls: PullsStore;
@@ -130,6 +131,7 @@ export interface StoreInstances {
   viewer: ViewerStore;
   aiSessions: AISessionsStore;
   fileResolver: FileResolverStore;
+  commitAnalysis: CommitAnalysisStore;
   roborevDaemon?: DaemonStore;
   roborevJobs?: JobsStore;
   roborevReview?: ReviewStore;

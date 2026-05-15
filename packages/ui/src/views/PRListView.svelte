@@ -120,7 +120,11 @@
                 name={selectedPR.name}
               />
             {/if}
-            <CommitMessageBanner number={selectedPR.number} />
+            <CommitMessageBanner
+              owner={selectedPR.owner}
+              name={selectedPR.name}
+              number={selectedPR.number}
+            />
             <PatchsetPicker />
             <ReviewBriefCard
               owner={selectedPR.owner}

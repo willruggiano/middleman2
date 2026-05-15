@@ -446,6 +446,14 @@ func (s *Server) registerAPI(api huma.API) {
 		Path:          "/repos/{owner}/{name}/pulls/{number}/ai-brief",
 		DefaultStatus: http.StatusNoContent,
 	}, s.deleteAIBrief)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/commits/{sha}/analyze", s.createAICommitAnalysis)
+	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/commits/{sha}/analyze", s.getAICommitAnalysis)
+	huma.Register(api, huma.Operation{
+		OperationID:   "delete-ai-commit-analysis",
+		Method:        http.MethodDelete,
+		Path:          "/repos/{owner}/{name}/pulls/{number}/commits/{sha}/analyze",
+		DefaultStatus: http.StatusNoContent,
+	}, s.deleteAICommitAnalysis)
 	huma.Get(api, "/stacks", s.listStacks)
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/stack", s.getStackForPR)
 
