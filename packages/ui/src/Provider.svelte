@@ -86,6 +86,7 @@
   } from "./stores/authorGroups.svelte.js";
   import { createViewerStore } from "./stores/viewer.svelte.js";
   import { createAISessionsStore } from "./stores/aiSessions.svelte.js";
+  import { createWorktreesStore } from "./stores/worktrees.svelte.js";
 
   interface Props {
     client: MiddlemanClient;
@@ -207,6 +208,8 @@
     }
     const diffStore = createDiffStore(diffOpts);
 
+    const worktreesStore = createWorktreesStore({ client: cl });
+
     const eventsStore = createEventsStore({
       ...(cfg.basePath != null && {
         getBasePath: () => cfg.basePath as string,
@@ -215,6 +218,7 @@
         void pullsStore.loadPulls();
         void issuesStore.loadIssues();
         void activityStore.loadActivity();
+        void worktreesStore.loadWorktrees();
       },
       onSyncStatus: (status) => {
         syncStore.setSyncStatus(status);
@@ -266,6 +270,7 @@
       aiSessions: aiSessionsStore,
       fileResolver: fileResolverStore,
       commitAnalysis: commitAnalysisStore,
+      worktrees: worktreesStore,
     };
 
     if (roborevBase) {

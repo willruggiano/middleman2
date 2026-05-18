@@ -2,8 +2,12 @@
   import { getStores, getNavigate, getSidebar, getActions, getHostState } from "../../context.js";
   import { groupByWorkflow } from "../../stores/workflow.svelte.js";
   import PullItem from "./PullItem.svelte";
+  import WorktreeItem from "./WorktreeItem.svelte";
 
-  const { pulls, sync, grouping, collapsedRepos, settings, authorGroups, viewer, diff: diffStore } = getStores();
+  const {
+    pulls, sync, grouping, collapsedRepos, settings, authorGroups,
+    viewer, diff: diffStore, worktrees,
+  } = getStores();
 
   // "Awaiting my review" — viewer is on the PR's requested-reviewer
   // list. These sort to the top of the PR list (and within each
@@ -136,9 +140,11 @@
     //     server sync finishing; debounced 2s so a flapping sync
     //     doesn't fire per retry.
     void pulls.loadPulls();
+    void worktrees.loadWorktrees();
 
     refreshHandle = setInterval(() => {
       void pulls.loadPulls();
+      void worktrees.loadWorktrees();
     }, 60_000);
 
     let syncDebounce: ReturnType<typeof setTimeout> | null = null;
@@ -147,6 +153,7 @@
       syncDebounce = setTimeout(() => {
         syncDebounce = null;
         void pulls.loadPulls();
+        void worktrees.loadWorktrees();
       }, 2_000);
     });
 
@@ -580,12 +587,17 @@
       <p class="state-message">No pull requests found.</p>
     {:else}
       {#if groupingMode === "byRepo"}
+        {@const worktreesByRepo = worktrees.worktreesByRepo()}
+        {@const reposWithPRs = new Set(pulls.pullsByRepo().keys())}
+        {@const orphanWorktreeRepos = [...worktreesByRepo.entries()]
+          .filter(([repo]) => !reposWithPRs.has(repo))}
         {#each [...pulls.pullsByRepo().entries()] as [repo, prs] (repo)}
           {@const userCollapsed = collapsedRepos.isCollapsed("pulls", repo)}
           {@const hasSelectedPR = isDiffFocus && prs.some(
             (p) => isSelected(p.repo_owner ?? "", p.repo_name ?? "", p.Number),
           )}
           {@const collapsed = userCollapsed && !hasSelectedPR}
+          {@const repoWorktrees = worktreesByRepo.get(repo) ?? []}
           <div class="repo-group">
             <button
               type="button"
@@ -614,6 +626,40 @@
                   {importAction}
                   onclick={() => handleSelect(pr.repo_owner ?? "", pr.repo_name ?? "", pr.Number)}
                 />
+              {/each}
+              {#if repoWorktrees.length > 0}
+                <div class="worktrees-subhead">Worktrees · {repoWorktrees.length}</div>
+                {#each repoWorktrees as w (w.id)}
+                  <WorktreeItem worktree={w} />
+                {/each}
+              {/if}
+            {/if}
+          </div>
+        {/each}
+        {#each orphanWorktreeRepos as [repo, ws] (repo)}
+          {@const collapsed = collapsedRepos.isCollapsed("pulls", repo)}
+          <div class="repo-group">
+            <button
+              type="button"
+              class="repo-header"
+              aria-expanded={!collapsed}
+              onclick={() => collapsedRepos.toggle("pulls", repo)}
+            >
+              <svg
+                class="repo-header__chevron"
+                class:repo-header__chevron--collapsed={collapsed}
+                width="10" height="10" viewBox="0 0 10 10"
+                fill="none" stroke="currentColor" stroke-width="1.5"
+              >
+                <polyline points="2,3 5,7 8,3" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <span class="repo-header__name">{repo}</span>
+              <span class="repo-header__count">0</span>
+            </button>
+            {#if !collapsed}
+              <div class="worktrees-subhead">Worktrees · {ws.length}</div>
+              {#each ws as w (w.id)}
+                <WorktreeItem worktree={w} />
               {/each}
             {/if}
           </div>
@@ -1161,6 +1207,17 @@
     font-size: 10px;
     color: var(--text-muted);
     flex-shrink: 0;
+  }
+
+  .worktrees-subhead {
+    padding: 4px 12px 2px 20px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border-muted);
   }
 
   .sidebar-footer {

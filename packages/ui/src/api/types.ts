@@ -28,6 +28,10 @@ export type MergeParams = components["schemas"]["MergePRInputBody"];
 export type WorktreeLink =
   components["schemas"]["WorktreeLinkResponse"];
 
+export type LocalWorktree = components["schemas"]["WorktreeResponse"];
+export type LocalWorktreesResponse =
+  components["schemas"]["WorktreesResponse"];
+
 export type Label = components["schemas"]["Label"];
 export type IssueLabel = Label;
 
