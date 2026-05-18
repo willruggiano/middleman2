@@ -2026,6 +2026,14 @@ export interface components {
             tmux_session: string;
             worktree_path: string;
         };
+        WorktreeBaseResponse: {
+            /** @description True when no remote tracking branch resolved; SHA is the worktree HEAD instead of a merge-base. */
+            fallback?: boolean;
+            /** @description Matched candidate ref, e.g. "origin/main". Empty when no candidate resolved. */
+            ref: string;
+            /** @description Merge-base SHA, or worktree HEAD when fallback is true. */
+            sha: string;
+        };
         WorktreeChangedFilesResponse: {
             /**
              * Format: uri
@@ -2033,6 +2041,7 @@ export interface components {
              * @example /api/v1/schemas/WorktreeChangedFilesResponse.json
              */
             readonly $schema?: string;
+            base: components["schemas"]["WorktreeBaseResponse"];
             files: components["schemas"]["ChangedFileResponse"][] | null;
         };
         WorktreeLinkResponse: {

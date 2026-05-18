@@ -96,6 +96,114 @@ func TestListChangedFilesDetectsDelete(t *testing.T) {
 	assert.Equal(2, got[0].Deletions)
 }
 
+func TestResolveBasePicksOriginMain(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	setupRepoWithRemote(t, dir, "main")
+
+	base, err := ResolveBase(ctx, dir)
+	require.NoError(err)
+	assert.Equal("origin/main", base.Ref)
+	assert.False(base.Fallback)
+	assert.NotEmpty(base.SHA)
+}
+
+func TestResolveBaseFallsThroughCandidates(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	setupRepoWithRemote(t, dir, "dev")
+
+	base, err := ResolveBase(ctx, dir)
+	require.NoError(err)
+	assert.Equal("origin/dev", base.Ref)
+	assert.False(base.Fallback)
+}
+
+func TestResolveBaseFallsBackToHEAD(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	runGitT(t, "", "init", "--initial-branch=main", dir)
+	runGitT(t, dir, "config", "user.email", "test@example.com")
+	runGitT(t, dir, "config", "user.name", "Test")
+	runGitT(t, dir, "commit", "--allow-empty", "-m", "init")
+
+	base, err := ResolveBase(ctx, dir)
+	require.NoError(err)
+	assert.Equal("", base.Ref)
+	assert.True(base.Fallback)
+	assert.NotEmpty(base.SHA)
+}
+
+func TestChangedFilesAgainstBaseIncludesCommittedAndUncommitted(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	setupRepoWithRemote(t, dir, "main")
+
+	// Diverge from origin/main: one committed change, one uncommitted.
+	require.NoError(os.WriteFile(filepath.Join(dir, "committed.txt"), []byte("commit\n"), 0o644))
+	runGitT(t, dir, "checkout", "-b", "feat/x")
+	runGitT(t, dir, "add", "committed.txt")
+	runGitT(t, dir, "commit", "-m", "add committed file")
+	require.NoError(os.WriteFile(filepath.Join(dir, "uncommitted.txt"), []byte("wip\n"), 0o644))
+
+	cs, err := ChangedFilesAgainstBase(ctx, dir)
+	require.NoError(err)
+	assert.Equal("origin/main", cs.Base.Ref)
+	assert.False(cs.Base.Fallback)
+
+	paths := make(map[string]ChangedFile, len(cs.Files))
+	for _, f := range cs.Files {
+		paths[f.Path] = f
+	}
+	require.Contains(paths, "committed.txt")
+	require.Contains(paths, "uncommitted.txt")
+	assert.Equal("added", paths["committed.txt"].Status)
+	assert.Equal("added", paths["uncommitted.txt"].Status)
+}
+
+// setupRepoWithRemote initialises `dir` as a working repo on
+// branch `mainBranch`, then bootstraps a sibling bare clone as
+// `origin`. The result is a repo where origin/<mainBranch> exists
+// and tracks the working repo's history.
+func setupRepoWithRemote(t *testing.T, dir, mainBranch string) {
+	t.Helper()
+	runGitT(t, "", "init", "--initial-branch="+mainBranch, dir)
+	runGitT(t, dir, "config", "user.email", "test@example.com")
+	runGitT(t, dir, "config", "user.name", "Test")
+	runGitT(t, dir, "commit", "--allow-empty", "-m", "init")
+
+	// Sibling bare repo to serve as origin.
+	originDir := dir + "-origin.git"
+	runGitT(t, "", "init", "--bare", originDir)
+	runGitT(t, dir, "remote", "add", "origin", originDir)
+	runGitT(t, dir, "push", "origin", mainBranch)
+	runGitT(t, dir, "fetch", "origin")
+}
+
 func runGitT(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

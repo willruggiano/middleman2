@@ -990,10 +990,23 @@ type WorkspaceResponse struct {
 	WorktreePath     string  `json:"worktree_path"`
 }
 
+// WorktreeBaseResponse defines model for WorktreeBaseResponse.
+type WorktreeBaseResponse struct {
+	// Fallback True when no remote tracking branch resolved; SHA is the worktree HEAD instead of a merge-base.
+	Fallback *bool `json:"fallback,omitempty"`
+
+	// Ref Matched candidate ref, e.g. "origin/main". Empty when no candidate resolved.
+	Ref string `json:"ref"`
+
+	// Sha Merge-base SHA, or worktree HEAD when fallback is true.
+	Sha string `json:"sha"`
+}
+
 // WorktreeChangedFilesResponse defines model for WorktreeChangedFilesResponse.
 type WorktreeChangedFilesResponse struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string                `json:"$schema,omitempty"`
+	Base   WorktreeBaseResponse   `json:"base"`
 	Files  *[]ChangedFileResponse `json:"files"`
 }
 

@@ -1751,16 +1751,21 @@ func (s *Server) getWorktreeChangedFiles(
 	if w.RemovedAt != nil {
 		return nil, huma.Error404NotFound("worktree no longer exists on disk")
 	}
-	changed, err := worktrees.ListChangedFiles(ctx, w.Path)
+	cs, err := worktrees.ChangedFilesAgainstBase(ctx, w.Path)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
 			"reading worktree changes failed: " + err.Error(),
 		)
 	}
 	out := worktreeChangedFilesResponse{
-		Files: make([]changedFileResponse, 0, len(changed)),
+		Base: worktreeBaseResponse{
+			Ref:      cs.Base.Ref,
+			SHA:      cs.Base.SHA,
+			Fallback: cs.Base.Fallback,
+		},
+		Files: make([]changedFileResponse, 0, len(cs.Files)),
 	}
-	for _, c := range changed {
+	for _, c := range cs.Files {
 		out.Files = append(out.Files, changedFileResponse{
 			Path:      c.Path,
 			OldPath:   c.OldPath,

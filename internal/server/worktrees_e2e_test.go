@@ -77,7 +77,7 @@ func TestAPIListWorktreesReturnsActiveAcrossRepos(t *testing.T) {
 	}
 }
 
-func TestAPIWorktreeChangedFiles(t *testing.T) {
+func TestAPIWorktreeChangedFilesAgainstBase(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available on PATH")
 	}
@@ -87,15 +87,27 @@ func TestAPIWorktreeChangedFiles(t *testing.T) {
 	client := setupTestClient(t, srv)
 	ctx := context.Background()
 
-	// Build a real worktree on disk with one uncommitted modification.
+	// Working repo on `main` plus a bare origin to give us
+	// `origin/main` for the base resolver to match against.
 	dir := t.TempDir()
 	runGitWT(t, "", "init", "--initial-branch=main", dir)
 	runGitWT(t, dir, "config", "user.email", "test@example.com")
 	runGitWT(t, dir, "config", "user.name", "Test")
-	require.NoError(os.WriteFile(filepath.Join(dir, "kept.txt"), []byte("a\nb\n"), 0o644))
-	runGitWT(t, dir, "add", "kept.txt")
-	runGitWT(t, dir, "commit", "-m", "init")
-	require.NoError(os.WriteFile(filepath.Join(dir, "kept.txt"), []byte("a\nb\nc\n"), 0o644))
+	require.NoError(os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0o644))
+	runGitWT(t, dir, "add", "base.txt")
+	runGitWT(t, dir, "commit", "-m", "base")
+	originDir := dir + "-origin.git"
+	runGitWT(t, "", "init", "--bare", originDir)
+	runGitWT(t, dir, "remote", "add", "origin", originDir)
+	runGitWT(t, dir, "push", "origin", "main")
+	runGitWT(t, dir, "fetch", "origin")
+
+	// Diverge: one committed change + one uncommitted modification.
+	runGitWT(t, dir, "checkout", "-b", "feat/x")
+	require.NoError(os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("feat\n"), 0o644))
+	runGitWT(t, dir, "add", "feature.txt")
+	runGitWT(t, dir, "commit", "-m", "add feature")
+	require.NoError(os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\nedit\n"), 0o644))
 
 	repoID, err := database.UpsertLocalRepo(ctx, "demo")
 	require.NoError(err)
@@ -103,7 +115,7 @@ func TestAPIWorktreeChangedFiles(t *testing.T) {
 	require.NoError(err)
 	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
 		Path:   canonDir,
-		Branch: "main",
+		Branch: "feat/x",
 	})
 	require.NoError(err)
 
@@ -111,13 +123,18 @@ func TestAPIWorktreeChangedFiles(t *testing.T) {
 	require.NoError(err)
 	require.Equal(http.StatusOK, resp.StatusCode())
 	require.NotNil(resp.JSON200)
+	assert.Equal("origin/main", resp.JSON200.Base.Ref)
+	assert.False(resp.JSON200.Base.Fallback != nil && *resp.JSON200.Base.Fallback)
+
 	require.NotNil(resp.JSON200.Files)
 	got := *resp.JSON200.Files
-	require.Len(got, 1)
-	assert.Equal("kept.txt", got[0].Path)
-	assert.Equal("modified", got[0].Status)
-	assert.Equal(int64(1), got[0].Additions)
-	assert.Equal(int64(0), got[0].Deletions)
+	require.Len(got, 2)
+	paths := map[string]string{}
+	for _, f := range got {
+		paths[f.Path] = f.Status
+	}
+	assert.Equal("modified", paths["base.txt"])
+	assert.Equal("added", paths["feature.txt"])
 }
 
 func TestAPIWorktreeChangedFilesNotFound(t *testing.T) {

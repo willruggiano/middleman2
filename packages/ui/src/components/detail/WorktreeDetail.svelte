@@ -21,6 +21,14 @@
   const loading = $derived(entry?.loading ?? false);
   const error = $derived(entry?.error ?? null);
   const fetchedAt = $derived(entry?.fetchedAt ?? 0);
+  const base = $derived(entry?.base ?? null);
+  const baseLabel = $derived(
+    base === null
+      ? ""
+      : base.ref
+        ? `vs ${base.ref}`
+        : "vs HEAD (no base ref found)",
+  );
 
   function statusColor(s: string): string {
     switch (s) {
@@ -93,10 +101,18 @@
 
     <section class="wt-detail__section">
       <div class="wt-detail__section-head">
-        <h2 class="wt-detail__section-title">Uncommitted changes</h2>
-        <span class="wt-detail__section-hint">
-          working tree vs HEAD &middot; committed work not shown yet
-        </span>
+        <h2 class="wt-detail__section-title">Changes</h2>
+        {#if baseLabel}
+          <span class="wt-detail__section-hint">{baseLabel}</span>
+        {/if}
+        {#if base && base.fallback}
+          <span
+            class="wt-detail__base-warn"
+            title="No origin/main, origin/master, origin/develop, or origin/dev found — diff is computed against the worktree's own HEAD instead."
+          >
+            no base ref
+          </span>
+        {/if}
       </div>
 
       {#if loading && files.length === 0}
@@ -106,7 +122,7 @@
           {error}
         </p>
       {:else if files.length === 0}
-        <p class="wt-detail__state-msg">No uncommitted changes.</p>
+        <p class="wt-detail__state-msg">No changes vs base.</p>
       {:else}
         <ul class="wt-detail__files">
           {#each files as f (f.path)}
@@ -265,6 +281,18 @@
   .wt-detail__section-hint {
     font-size: 11px;
     color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .wt-detail__base-warn {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--accent-amber);
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent-amber) 12%, transparent);
   }
 
   .wt-detail__state {

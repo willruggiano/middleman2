@@ -325,8 +325,8 @@ type worktreesResponse struct {
 	Worktrees []worktreeResponse `json:"worktrees"`
 }
 
-// changedFileResponse is one entry in a worktree's current change
-// set (uncommitted: working tree vs HEAD).
+// changedFileResponse is one entry in a worktree's change set
+// relative to its base ref.
 type changedFileResponse struct {
 	Path      string `json:"path"`
 	OldPath   string `json:"old_path,omitempty"`
@@ -336,7 +336,16 @@ type changedFileResponse struct {
 	Deletions int    `json:"deletions"`
 }
 
+// worktreeBaseResponse describes the commit a worktree's change
+// list is computed against.
+type worktreeBaseResponse struct {
+	Ref      string `json:"ref" doc:"Matched candidate ref, e.g. \"origin/main\". Empty when no candidate resolved."`
+	SHA      string `json:"sha" doc:"Merge-base SHA, or worktree HEAD when fallback is true."`
+	Fallback bool   `json:"fallback,omitempty" doc:"True when no remote tracking branch resolved; SHA is the worktree HEAD instead of a merge-base."`
+}
+
 type worktreeChangedFilesResponse struct {
+	Base  worktreeBaseResponse  `json:"base"`
 	Files []changedFileResponse `json:"files"`
 }
 

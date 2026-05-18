@@ -9,16 +9,129 @@ import (
 	"strings"
 )
 
-// ChangedFile is one entry in a worktree's current change set —
-// what `git diff HEAD` would report. Additions/Deletions are 0 for
-// binary files; IsBinary disambiguates.
+// ChangedFile is one entry in a worktree's change set.
+// Additions/Deletions are 0 for binary files; IsBinary disambiguates.
 type ChangedFile struct {
-	Path       string `json:"path"`
-	OldPath    string `json:"old_path"`
-	Status     string `json:"status"` // added | modified | deleted | renamed | copied
-	IsBinary   bool   `json:"is_binary"`
-	Additions  int    `json:"additions"`
-	Deletions  int    `json:"deletions"`
+	Path      string `json:"path"`
+	OldPath   string `json:"old_path"`
+	Status    string `json:"status"` // added | modified | deleted | renamed | copied
+	IsBinary  bool   `json:"is_binary"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+}
+
+// BaseRef describes which commit a worktree's working-tree diff is
+// computed against. Ref is the symbolic ref that was matched (e.g.
+// "origin/main") or empty when no candidate ref resolved; in the
+// latter case Fallback is true and SHA is the worktree's HEAD.
+type BaseRef struct {
+	Ref      string `json:"ref"`
+	SHA      string `json:"sha"`
+	Fallback bool   `json:"fallback"`
+}
+
+// ChangeSet is the full picture of what a worktree has changed
+// relative to its base: which base was resolved, and the file list.
+type ChangeSet struct {
+	Base  BaseRef       `json:"base"`
+	Files []ChangedFile `json:"files"`
+}
+
+// candidateBaseRefs are tried in order. The first one that resolves
+// in the worktree wins. Mirrors the convention captured in the
+// design memo: default-branch tracking refs, plus a few common
+// non-`main` names.
+var candidateBaseRefs = []string{
+	"origin/main",
+	"origin/master",
+	"origin/develop",
+	"origin/dev",
+}
+
+// ResolveBase tries each candidate ref against the worktree's clone
+// and returns the first that resolves, along with the merge-base
+// against HEAD. When no candidate resolves, returns a BaseRef
+// pointing at HEAD with Fallback=true.
+func ResolveBase(ctx context.Context, worktreePath string) (BaseRef, error) {
+	if worktreePath == "" {
+		return BaseRef{}, fmt.Errorf("worktreePath is required")
+	}
+	for _, ref := range candidateBaseRefs {
+		// `git rev-parse --verify <ref>` exits non-zero if missing.
+		if _, err := gitCmd(ctx, worktreePath, "rev-parse", "--verify", "--quiet", ref); err != nil {
+			continue
+		}
+		mbOut, err := gitCmd(ctx, worktreePath, "merge-base", "HEAD", ref)
+		if err != nil {
+			continue
+		}
+		return BaseRef{
+			Ref: ref,
+			SHA: strings.TrimSpace(string(mbOut)),
+		}, nil
+	}
+	// No remote base found — fall back to HEAD.
+	headOut, err := gitCmd(ctx, worktreePath, "rev-parse", "HEAD")
+	if err != nil {
+		return BaseRef{}, fmt.Errorf("rev-parse HEAD: %w", err)
+	}
+	return BaseRef{
+		SHA:      strings.TrimSpace(string(headOut)),
+		Fallback: true,
+	}, nil
+}
+
+// ChangedFilesAgainstBase resolves the worktree's base and returns
+// the file change list between that base and the working tree —
+// the "full draft" view (committed work + staged + unstaged +
+// untracked).
+//
+// When no base ref is found in the worktree, falls back to HEAD vs
+// working tree. Untracked files are surfaced from `git ls-files
+// --others` since `git diff` ignores them by default.
+func ChangedFilesAgainstBase(ctx context.Context, worktreePath string) (ChangeSet, error) {
+	base, err := ResolveBase(ctx, worktreePath)
+	if err != nil {
+		return ChangeSet{}, fmt.Errorf("resolve base: %w", err)
+	}
+	files, err := changedFilesVsRef(ctx, worktreePath, base.SHA)
+	if err != nil {
+		return ChangeSet{}, err
+	}
+	untracked, err := listUntracked(ctx, worktreePath)
+	if err != nil {
+		return ChangeSet{}, err
+	}
+	for _, path := range untracked {
+		files = append(files, ChangedFile{
+			Path:    path,
+			OldPath: path,
+			Status:  "added",
+		})
+	}
+	return ChangeSet{Base: base, Files: files}, nil
+}
+
+// listUntracked returns paths of files git is aware of but not
+// tracking — modulo .gitignore. Used to surface fresh files in
+// the "vs base" view since `git diff` ignores them.
+func listUntracked(ctx context.Context, worktreePath string) ([]string, error) {
+	out, err := gitCmd(ctx, worktreePath,
+		"ls-files", "--others", "--exclude-standard", "-z",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files --others: %w", err)
+	}
+	parts := bytes.Split(out, []byte{0})
+	var paths []string
+	for _, p := range parts {
+		s := string(p)
+		if s == "" {
+			continue
+		}
+		paths = append(paths, s)
+	}
+	return paths, nil
 }
 
 // ListChangedFiles returns the files modified in the worktree
@@ -26,18 +139,25 @@ type ChangedFile struct {
 // the live, uncommitted state (staged + unstaged + untracked-as-far-as-
 // git-knows). This is the "what's currently in flight here" view.
 //
-// Two git calls: --raw -z for status letters and rename detection,
-// --numstat -z for line counts. Results are cross-referenced by
-// path; entries present in --raw but missing from --numstat (e.g.
-// binary files) are returned with IsBinary set.
-//
 // Returns a nil slice when the worktree is clean.
 func ListChangedFiles(ctx context.Context, worktreePath string) ([]ChangedFile, error) {
+	return changedFilesVsRef(ctx, worktreePath, "HEAD")
+}
+
+// changedFilesVsRef does the actual git work: two calls (--raw -z
+// for status letters and rename detection, --numstat -z for line
+// counts) cross-referenced by path. Entries present in --raw but
+// missing from --numstat (e.g. binary files) are returned with
+// IsBinary set. ref can be a SHA, branch name, or symbolic ref.
+func changedFilesVsRef(ctx context.Context, worktreePath, ref string) ([]ChangedFile, error) {
 	if worktreePath == "" {
 		return nil, fmt.Errorf("worktreePath is required")
 	}
+	if ref == "" {
+		return nil, fmt.Errorf("ref is required")
+	}
 	rawOut, err := gitCmd(ctx, worktreePath,
-		"diff", "HEAD", "--raw", "-z", "-M", "-C", "--find-copies-harder",
+		"diff", ref, "--raw", "-z", "-M", "-C", "--find-copies-harder",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("git diff --raw: %w", err)
@@ -45,7 +165,7 @@ func ListChangedFiles(ctx context.Context, worktreePath string) ([]ChangedFile, 
 	files := parseRawZ(rawOut)
 
 	numstatOut, err := gitCmd(ctx, worktreePath,
-		"diff", "HEAD", "--numstat", "-z",
+		"diff", ref, "--numstat", "-z",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("git diff --numstat: %w", err)

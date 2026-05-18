@@ -3,12 +3,14 @@ import type { MiddlemanClient } from "../types.js";
 import type { components } from "../api/generated/schema.js";
 
 export type ChangedFile = components["schemas"]["ChangedFileResponse"];
+export type WorktreeBase = components["schemas"]["WorktreeBaseResponse"];
 
 export interface WorktreesStoreOptions {
   client: MiddlemanClient;
 }
 
 interface ChangedFilesEntry {
+  base: WorktreeBase | null;
   files: ChangedFile[];
   loading: boolean;
   error: string | null;
@@ -92,6 +94,7 @@ export function createWorktreesStore(opts: WorktreesStoreOptions) {
 
   async function loadChangedFiles(id: number): Promise<void> {
     const prev = changedFilesById[id] ?? {
+      base: null,
       files: [],
       loading: false,
       error: null,
@@ -114,6 +117,7 @@ export function createWorktreesStore(opts: WorktreesStoreOptions) {
       changedFilesById = {
         ...changedFilesById,
         [id]: {
+          base: data?.base ?? null,
           files: data?.files ?? [],
           loading: false,
           error: null,
