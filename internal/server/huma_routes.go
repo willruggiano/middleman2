@@ -16,6 +16,7 @@ import (
 	"github.com/wesm/middleman/internal/db"
 	"github.com/wesm/middleman/internal/gitclone"
 	ghclient "github.com/wesm/middleman/internal/github"
+	"github.com/wesm/middleman/internal/worktrees"
 )
 
 type listPullsInput struct {
@@ -384,6 +385,7 @@ func (s *Server) registerAPI(api huma.API) {
 
 	huma.Get(api, "/repos", s.listRepos)
 	huma.Get(api, "/worktrees", s.listWorktrees)
+	huma.Get(api, "/worktrees/{id}/changed-files", s.getWorktreeChangedFiles)
 	huma.Get(api, "/repos/{owner}/{name}", s.getRepo)
 	huma.Get(api, "/repos/{owner}/{name}/comment-autocomplete", s.getCommentAutocomplete)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/approve", s.approvePR)
@@ -1729,6 +1731,46 @@ func (s *Server) listRepos(ctx context.Context, _ *struct{}) (*listReposOutput, 
 
 type listWorktreesOutput struct {
 	Body worktreesResponse
+}
+
+type getWorktreeChangedFilesInput struct {
+	ID int64 `path:"id"`
+}
+
+type getWorktreeChangedFilesOutput struct {
+	Body worktreeChangedFilesResponse
+}
+
+func (s *Server) getWorktreeChangedFiles(
+	ctx context.Context, in *getWorktreeChangedFilesInput,
+) (*getWorktreeChangedFilesOutput, error) {
+	w, err := s.db.GetWorktreeByID(ctx, in.ID)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	if w.RemovedAt != nil {
+		return nil, huma.Error404NotFound("worktree no longer exists on disk")
+	}
+	changed, err := worktrees.ListChangedFiles(ctx, w.Path)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			"reading worktree changes failed: " + err.Error(),
+		)
+	}
+	out := worktreeChangedFilesResponse{
+		Files: make([]changedFileResponse, 0, len(changed)),
+	}
+	for _, c := range changed {
+		out.Files = append(out.Files, changedFileResponse{
+			Path:      c.Path,
+			OldPath:   c.OldPath,
+			Status:    c.Status,
+			IsBinary:  c.IsBinary,
+			Additions: c.Additions,
+			Deletions: c.Deletions,
+		})
+	}
+	return &getWorktreeChangedFilesOutput{Body: out}, nil
 }
 
 func (s *Server) listWorktrees(ctx context.Context, _ *struct{}) (*listWorktreesOutput, error) {

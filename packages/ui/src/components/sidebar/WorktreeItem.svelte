@@ -3,8 +3,10 @@
 
   interface Props {
     worktree: LocalWorktree;
+    selected?: boolean;
+    onclick?: () => void;
   }
-  const { worktree }: Props = $props();
+  const { worktree, selected = false, onclick }: Props = $props();
 
   function basename(path: string): string {
     const i = path.lastIndexOf("/");
@@ -16,12 +18,24 @@
       ? "(detached)"
       : worktree.branch || "",
   );
+
+  function handleKey(e: KeyboardEvent): void {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onclick?.();
+    }
+  }
 </script>
 
 <div
   class="worktree-item"
   class:worktree-item--locked={worktree.is_locked}
   class:worktree-item--prunable={worktree.is_prunable}
+  class:worktree-item--selected={selected}
+  role="button"
+  tabindex="0"
+  onclick={() => onclick?.()}
+  onkeydown={handleKey}
   title={worktree.path}
 >
   <span class="worktree-item__icon" aria-hidden="true">
@@ -53,6 +67,25 @@
     color: var(--text-secondary);
     background: var(--bg-surface);
     border-top: 1px solid var(--border-muted);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .worktree-item:hover {
+    background: var(--bg-surface-hover);
+  }
+
+  .worktree-item:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: -2px;
+  }
+
+  .worktree-item--selected {
+    background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+  }
+
+  .worktree-item--selected .worktree-item__name {
+    color: var(--accent-blue);
   }
 
   .worktree-item__icon {

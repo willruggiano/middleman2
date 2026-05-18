@@ -189,6 +189,12 @@
     return sel !== null && sel.owner === owner && sel.name === name && sel.number === number;
   }
 
+  function handleSelectWorktree(id: number): void {
+    pulls.clearSelection();
+    worktrees.selectWorktree(id);
+    navigate(`/pulls/worktree/${id}`);
+  }
+
   const selectedVisiblePR = $derived.by(() => {
     const sel = pulls.getSelectedPR();
     if (sel === null) return null;
@@ -647,7 +653,11 @@
             </button>
             {#if !collapsed}
               {#each ws as w (w.id)}
-                <WorktreeItem worktree={w} />
+                <WorktreeItem
+                  worktree={w}
+                  selected={worktrees.getSelectedId() === w.id}
+                  onclick={() => handleSelectWorktree(w.id)}
+                />
               {/each}
             {/if}
           </div>

@@ -52,6 +52,7 @@
     isDiffView,
     getDetailTab,
     getSelectedPRFromRoute,
+    getSelectedWorktreeFromRoute,
   } from "./lib/stores/router.svelte.ts";
   import {
     getGlobalRepo,
@@ -227,8 +228,16 @@
           route.selected.name,
           route.selected.number,
         );
+        stores.worktrees.selectWorktree(null);
+      } else if (
+        "selectedWorktree" in route &&
+        route.selectedWorktree
+      ) {
+        stores.pulls.clearSelection();
+        stores.worktrees.selectWorktree(route.selectedWorktree.id);
       } else {
         stores.pulls.clearSelection();
+        stores.worktrees.selectWorktree(null);
       }
     } else if (route.page === "issues") {
       if (
@@ -595,9 +604,12 @@
             getSelectedPRFromRoute() ??
             stores?.pulls.getSelectedPR() ??
             null}
+          {@const selectedWorktreeId =
+            getSelectedWorktreeFromRoute()?.id ?? null}
           {@const detailTab = getDetailTab()}
           <PRListView
             {selectedPR}
+            {selectedWorktreeId}
             {detailTab}
             isSidebarCollapsed={isSidebarCollapsed()}
             sidebarWidth={getSidebarWidth()}

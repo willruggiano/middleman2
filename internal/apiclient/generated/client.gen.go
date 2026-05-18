@@ -229,6 +229,18 @@ type BlobResponse struct {
 	Truncated bool   `json:"truncated"`
 }
 
+// ChangedFileResponse defines model for ChangedFileResponse.
+type ChangedFileResponse struct {
+	Additions int64   `json:"additions"`
+	Deletions int64   `json:"deletions"`
+	IsBinary  *bool   `json:"is_binary,omitempty"`
+	OldPath   *string `json:"old_path,omitempty"`
+	Path      string  `json:"path"`
+
+	// Status added | modified | deleted | renamed | copied
+	Status string `json:"status"`
+}
+
 // CommentAutocompleteReference defines model for CommentAutocompleteReference.
 type CommentAutocompleteReference struct {
 	Kind   string `json:"kind"`
@@ -978,6 +990,13 @@ type WorkspaceResponse struct {
 	WorktreePath     string  `json:"worktree_path"`
 }
 
+// WorktreeChangedFilesResponse defines model for WorktreeChangedFilesResponse.
+type WorktreeChangedFilesResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string                `json:"$schema,omitempty"`
+	Files  *[]ChangedFileResponse `json:"files"`
+}
+
 // WorktreeLinkResponse defines model for WorktreeLinkResponse.
 type WorktreeLinkResponse struct {
 	WorktreeBranch *string `json:"worktree_branch,omitempty"`
@@ -1460,6 +1479,9 @@ type ClientInterface interface {
 
 	// GetWorktrees request
 	GetWorktrees(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetWorktreesByIdChangedFiles request
+	GetWorktreesByIdChangedFiles(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) GetActivity(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2424,6 +2446,18 @@ func (c *Client) GetWorkspacesById(ctx context.Context, id string, reqEditors ..
 
 func (c *Client) GetWorktrees(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetWorktreesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetWorktreesByIdChangedFiles(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetWorktreesByIdChangedFilesRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -5915,6 +5949,40 @@ func NewGetWorktreesRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetWorktreesByIdChangedFilesRequest generates requests for GetWorktreesByIdChangedFiles
+func NewGetWorktreesByIdChangedFilesRequest(server string, id int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/worktrees/%s/changed-files", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -6181,6 +6249,9 @@ type ClientWithResponsesInterface interface {
 
 	// GetWorktreesWithResponse request
 	GetWorktreesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetWorktreesResponse, error)
+
+	// GetWorktreesByIdChangedFilesWithResponse request
+	GetWorktreesByIdChangedFilesWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*GetWorktreesByIdChangedFilesResponse, error)
 }
 
 type GetActivityResponse struct {
@@ -7599,6 +7670,29 @@ func (r GetWorktreesResponse) StatusCode() int {
 	return 0
 }
 
+type GetWorktreesByIdChangedFilesResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *WorktreeChangedFilesResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetWorktreesByIdChangedFilesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetWorktreesByIdChangedFilesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 // GetActivityWithResponse request returning *GetActivityResponse
 func (c *ClientWithResponses) GetActivityWithResponse(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*GetActivityResponse, error) {
 	rsp, err := c.GetActivity(ctx, params, reqEditors...)
@@ -8307,6 +8401,15 @@ func (c *ClientWithResponses) GetWorktreesWithResponse(ctx context.Context, reqE
 		return nil, err
 	}
 	return ParseGetWorktreesResponse(rsp)
+}
+
+// GetWorktreesByIdChangedFilesWithResponse request returning *GetWorktreesByIdChangedFilesResponse
+func (c *ClientWithResponses) GetWorktreesByIdChangedFilesWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*GetWorktreesByIdChangedFilesResponse, error) {
+	rsp, err := c.GetWorktreesByIdChangedFiles(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetWorktreesByIdChangedFilesResponse(rsp)
 }
 
 // ParseGetActivityResponse parses an HTTP response from a GetActivityWithResponse call
@@ -10268,6 +10371,39 @@ func ParseGetWorktreesResponse(rsp *http.Response) (*GetWorktreesResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest WorktreesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetWorktreesByIdChangedFilesResponse parses an HTTP response from a GetWorktreesByIdChangedFilesWithResponse call
+func ParseGetWorktreesByIdChangedFilesResponse(rsp *http.Response) (*GetWorktreesByIdChangedFilesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetWorktreesByIdChangedFilesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WorktreeChangedFilesResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

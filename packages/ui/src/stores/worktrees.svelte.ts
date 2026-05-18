@@ -1,8 +1,18 @@
 import type { LocalWorktree } from "../api/types.js";
 import type { MiddlemanClient } from "../types.js";
+import type { components } from "../api/generated/schema.js";
+
+export type ChangedFile = components["schemas"]["ChangedFileResponse"];
 
 export interface WorktreesStoreOptions {
   client: MiddlemanClient;
+}
+
+interface ChangedFilesEntry {
+  files: ChangedFile[];
+  loading: boolean;
+  error: string | null;
+  fetchedAt: number;
 }
 
 function apiErrorMessage(
@@ -22,6 +32,8 @@ export function createWorktreesStore(opts: WorktreesStoreOptions) {
   let worktrees = $state<LocalWorktree[]>([]);
   let loading = $state(false);
   let storeError = $state<string | null>(null);
+  let changedFilesById = $state<Record<number, ChangedFilesEntry>>({});
+  let selectedId = $state<number | null>(null);
 
   function getWorktrees(): LocalWorktree[] {
     return worktrees;
@@ -31,6 +43,18 @@ export function createWorktreesStore(opts: WorktreesStoreOptions) {
   }
   function getError(): string | null {
     return storeError;
+  }
+  function getById(id: number): LocalWorktree | null {
+    return worktrees.find((w) => w.id === id) ?? null;
+  }
+  function getChangedFiles(id: number): ChangedFilesEntry | null {
+    return changedFilesById[id] ?? null;
+  }
+  function getSelectedId(): number | null {
+    return selectedId;
+  }
+  function selectWorktree(id: number | null): void {
+    selectedId = id;
   }
 
   // Group by `${repo_owner}/${repo_name}` so callers can render a
@@ -66,12 +90,59 @@ export function createWorktreesStore(opts: WorktreesStoreOptions) {
     }
   }
 
+  async function loadChangedFiles(id: number): Promise<void> {
+    const prev = changedFilesById[id] ?? {
+      files: [],
+      loading: false,
+      error: null,
+      fetchedAt: 0,
+    };
+    changedFilesById = {
+      ...changedFilesById,
+      [id]: { ...prev, loading: true, error: null },
+    };
+    try {
+      const { data, error } = await apiClient.GET(
+        "/worktrees/{id}/changed-files",
+        { params: { path: { id } } },
+      );
+      if (error) {
+        throw new Error(
+          apiErrorMessage(error, "failed to load worktree files"),
+        );
+      }
+      changedFilesById = {
+        ...changedFilesById,
+        [id]: {
+          files: data?.files ?? [],
+          loading: false,
+          error: null,
+          fetchedAt: Date.now(),
+        },
+      };
+    } catch (err) {
+      changedFilesById = {
+        ...changedFilesById,
+        [id]: {
+          ...prev,
+          loading: false,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
+  }
+
   return {
     getWorktrees,
     isLoading,
     getError,
+    getById,
     worktreesByRepo,
     loadWorktrees,
+    getChangedFiles,
+    loadChangedFiles,
+    getSelectedId,
+    selectWorktree,
   };
 }
 

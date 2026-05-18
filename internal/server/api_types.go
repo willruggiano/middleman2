@@ -325,6 +325,21 @@ type worktreesResponse struct {
 	Worktrees []worktreeResponse `json:"worktrees"`
 }
 
+// changedFileResponse is one entry in a worktree's current change
+// set (uncommitted: working tree vs HEAD).
+type changedFileResponse struct {
+	Path      string `json:"path"`
+	OldPath   string `json:"old_path,omitempty"`
+	Status    string `json:"status" doc:"added | modified | deleted | renamed | copied"`
+	IsBinary  bool   `json:"is_binary,omitempty"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+}
+
+type worktreeChangedFilesResponse struct {
+	Files []changedFileResponse `json:"files"`
+}
+
 type activityItemResponse struct {
 	ID           string `json:"id"`
 	Cursor       string `json:"cursor"`

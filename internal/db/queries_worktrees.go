@@ -176,6 +176,25 @@ func (d *DB) ListAllActiveWorktrees(
 	return out, rows.Err()
 }
 
+// GetWorktreeByID returns a single worktree by row id, regardless
+// of removed_at. Callers that want to reject removed worktrees can
+// check the result.
+func (d *DB) GetWorktreeByID(ctx context.Context, id int64) (Worktree, error) {
+	row := d.ro.QueryRowContext(ctx,
+		`SELECT id, repo_id, path, branch, head_sha,
+		        is_detached, is_locked, is_prunable,
+		        discovered_at, last_seen_at, removed_at
+		   FROM middleman_worktrees
+		  WHERE id = ?`,
+		id,
+	)
+	w, err := scanWorktree(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Worktree{}, fmt.Errorf("worktree %d: %w", id, err)
+	}
+	return w, err
+}
+
 func (d *DB) getWorktreeByRepoPath(
 	ctx context.Context, repoID int64, path string,
 ) (Worktree, error) {

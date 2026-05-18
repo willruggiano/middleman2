@@ -6,6 +6,8 @@
   import PullList from "../components/sidebar/PullList.svelte";
   import PullDetail
     from "../components/detail/PullDetail.svelte";
+  import WorktreeDetail
+    from "../components/detail/WorktreeDetail.svelte";
   import DiffView from "../components/diff/DiffView.svelte";
   import DiffSidebar from "../components/diff/DiffSidebar.svelte";
   import ReviewCoverBanner from "../components/detail/ReviewCoverBanner.svelte";
@@ -26,6 +28,7 @@
       name: string;
       number: number;
     } | null;
+    selectedWorktreeId?: number | null;
     detailTab?: "conversation" | "files";
     isSidebarCollapsed?: boolean;
     hideSidebar?: boolean;
@@ -35,6 +38,7 @@
 
   let {
     selectedPR = null,
+    selectedWorktreeId = null,
     detailTab = "files",
     isSidebarCollapsed = false,
     hideSidebar = false,
@@ -79,13 +83,15 @@
   {onSidebarResize}
   showCollapsedStrip={isSidebarToggleEnabled()}
   onExpand={toggleSidebar}
-  mainEmpty={selectedPR === null}
+  mainEmpty={selectedPR === null && selectedWorktreeId === null}
 >
   {#snippet sidebar()}
     <PullList getDetailTab={() => detailTab} />
   {/snippet}
 
-  {#if selectedPR !== null}
+  {#if selectedWorktreeId !== null}
+    <WorktreeDetail worktreeId={selectedWorktreeId} />
+  {:else if selectedPR !== null}
     <div class="detail-tabs">
       <button
         class="detail-tab"

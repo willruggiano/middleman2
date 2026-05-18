@@ -188,6 +188,27 @@ func TestUpsertLocalRepoRejectsEmpty(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestGetWorktreeByID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	repoID := insertTestRepo(t, d, "o", "r")
+	w, err := d.UpsertWorktree(ctx, repoID, ScannedWorktree{
+		Path: "/code/o/r-feat", Branch: "feat/x", HeadSHA: "aaaa",
+	})
+	require.NoError(err)
+
+	got, err := d.GetWorktreeByID(ctx, w.ID)
+	require.NoError(err)
+	assert.Equal(w.ID, got.ID)
+	assert.Equal("/code/o/r-feat", got.Path)
+
+	_, err = d.GetWorktreeByID(ctx, 99999)
+	require.Error(err)
+}
+
 func TestListReposExcludesLocalEntries(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

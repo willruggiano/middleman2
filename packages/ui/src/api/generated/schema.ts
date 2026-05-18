@@ -834,6 +834,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/worktrees/{id}/changed-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get worktrees by ID changed files */
+        get: operations["get-worktrees-by-id-changed-files"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1103,6 +1120,17 @@ export interface components {
             /** @description Raw file content (UTF-8). Truncated empty + truncated=true when oversized. */
             content: string;
             truncated: boolean;
+        };
+        ChangedFileResponse: {
+            /** Format: int64 */
+            additions: number;
+            /** Format: int64 */
+            deletions: number;
+            is_binary?: boolean;
+            old_path?: string;
+            path: string;
+            /** @description added | modified | deleted | renamed | copied */
+            status: string;
         };
         CommentAutocompleteReference: {
             kind: string;
@@ -1997,6 +2025,15 @@ export interface components {
             status: string;
             tmux_session: string;
             worktree_path: string;
+        };
+        WorktreeChangedFilesResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/WorktreeChangedFilesResponse.json
+             */
+            readonly $schema?: string;
+            files: components["schemas"]["ChangedFileResponse"][] | null;
         };
         WorktreeLinkResponse: {
             worktree_branch?: string;
@@ -4112,6 +4149,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorktreesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-worktrees-by-id-changed-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorktreeChangedFilesResponse"];
                 };
             };
             /** @description Error */
