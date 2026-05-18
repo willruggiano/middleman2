@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { getStores } from "../../context.js";
 
   const { worktrees } = getStores();
@@ -22,11 +22,17 @@
     }
   });
 
-  // Per-id file fetch. Re-fires when worktreeId changes. Reads only
-  // the prop and writes to a disjoint slice of store state, so no
-  // feedback loop.
+  // Per-id file fetch. Re-fires when worktreeId changes. The call
+  // itself is untracked because loadChangedFiles reads
+  // `changedFilesById[id]` before writing it — Svelte 5 tracks
+  // reactive reads through function calls, so without untrack the
+  // effect would observe the write to changedFilesById and re-run
+  // until effect_update_depth_exceeded.
   $effect(() => {
-    void worktrees.loadChangedFiles(worktreeId);
+    const id = worktreeId;
+    untrack(() => {
+      void worktrees.loadChangedFiles(id);
+    });
   });
 
   const w = $derived(worktrees.getById(worktreeId));
