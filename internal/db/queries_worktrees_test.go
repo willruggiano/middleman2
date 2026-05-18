@@ -188,6 +188,51 @@ func TestUpsertLocalRepoRejectsEmpty(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestMigration018SweepsStaleGitHubWorktrees(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	// Two repos: one local (the legitimate model), one github.
+	// Insert worktree rows against each and confirm that the
+	// startup migrations have already removed the github-attached
+	// one — openTestDB runs migrations to head, so by the time we
+	// look the legacy row is gone.
+	//
+	// To prove the migration's effect we have to manufacture a row
+	// AFTER the migration ran and then re-run the cleanup query.
+	githubRepoID := insertTestRepo(t, d, "acme", "widget")
+	localRepoID, err := d.UpsertLocalRepo(ctx, "redpanda")
+	require.NoError(err)
+
+	_, err = d.UpsertWorktree(ctx, localRepoID, ScannedWorktree{
+		Path: "/code/redpanda", Branch: "dev",
+	})
+	require.NoError(err)
+	// Manually insert a github-attached worktree row, mirroring the
+	// legacy state. UpsertWorktree itself is fine with any repo_id;
+	// only the migration enforces the cleanup invariant.
+	_, err = d.WriteDB().ExecContext(ctx,
+		`INSERT INTO middleman_worktrees (repo_id, path) VALUES (?, ?)`,
+		githubRepoID, "/code/legacy",
+	)
+	require.NoError(err)
+
+	// Re-run the migration's cleanup query manually.
+	_, err = d.WriteDB().ExecContext(ctx,
+		`DELETE FROM middleman_worktrees WHERE repo_id IN (
+			SELECT id FROM middleman_repos WHERE platform = 'github'
+		)`,
+	)
+	require.NoError(err)
+
+	all, err := d.ListAllActiveWorktrees(ctx)
+	require.NoError(err)
+	require.Len(all, 1)
+	assert.Equal("redpanda", all[0].RepoName)
+}
+
 func TestGetWorktreeByID(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

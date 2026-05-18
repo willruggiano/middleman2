@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -111,7 +112,16 @@ func ChangedFilesAgainstBase(
 	if err != nil {
 		return ChangeSet{}, err
 	}
+	nested, err := nestedWorktreeRelPaths(ctx, worktreePath)
+	if err != nil {
+		// Don't fail the whole operation if the nested scan errors;
+		// just skip filtering and accept some noise.
+		nested = nil
+	}
 	for _, path := range untracked {
+		if isUnderAnyWorktree(path, nested) {
+			continue
+		}
 		files = append(files, ChangedFile{
 			Path:    path,
 			OldPath: path,
@@ -119,6 +129,62 @@ func ChangedFilesAgainstBase(
 		})
 	}
 	return ChangeSet{Base: base, Files: files}, nil
+}
+
+// nestedWorktreeRelPaths enumerates git worktrees that live under
+// parent (any sibling worktree this one isn't itself) and returns
+// their paths relative to parent. Used to filter `ls-files --others`
+// output so a nested worktree's directory doesn't show up as an
+// untracked "added" file in its parent's change list.
+//
+// Canonicalises both sides via EvalSymlinks before comparing —
+// `git worktree list` reports canonical paths, and the caller may
+// pass an aliased path (e.g. macOS /var/... vs /private/var/...).
+func nestedWorktreeRelPaths(ctx context.Context, parent string) ([]string, error) {
+	scanned, err := Scan(ctx, parent)
+	if err != nil {
+		return nil, err
+	}
+	canonParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		canonParent = parent
+	}
+	out := make([]string, 0, len(scanned))
+	for _, w := range scanned {
+		canonW := w.Path
+		if resolved, err := filepath.EvalSymlinks(w.Path); err == nil {
+			canonW = resolved
+		}
+		if canonW == canonParent {
+			continue
+		}
+		rel, err := filepath.Rel(canonParent, canonW)
+		if err != nil {
+			continue
+		}
+		// "../something" means the worktree is a sibling, not nested.
+		if strings.HasPrefix(rel, "..") {
+			continue
+		}
+		out = append(out, filepath.ToSlash(rel))
+	}
+	return out, nil
+}
+
+// isUnderAnyWorktree returns true if path is inside one of the
+// nested worktree directories. Tolerates the trailing slash that
+// `git ls-files --others` adds to directory entries.
+func isUnderAnyWorktree(path string, nestedRels []string) bool {
+	clean := strings.TrimRight(path, "/")
+	for _, n := range nestedRels {
+		if clean == n {
+			return true
+		}
+		if strings.HasPrefix(clean, n+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // listUntracked returns paths of files git is aware of but not

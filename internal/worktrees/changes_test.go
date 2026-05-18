@@ -185,6 +185,34 @@ func TestChangedFilesAgainstBaseIncludesCommittedAndUncommitted(t *testing.T) {
 	assert.Equal("added", paths["uncommitted.txt"].Status)
 }
 
+func TestChangedFilesAgainstBaseFiltersNestedWorktrees(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	parent := t.TempDir()
+	setupRepoWithRemote(t, parent, "main")
+
+	// Add a nested worktree under `.worktrees/test`. Its directory
+	// is untracked from the parent's POV, so without filtering
+	// `git ls-files --others` would report it as an "added" entry.
+	nestedPath := filepath.Join(parent, ".worktrees", "test")
+	require.NoError(os.MkdirAll(filepath.Dir(nestedPath), 0o755))
+	runGitT(t, parent, "worktree", "add", "-b", "feat/x", nestedPath)
+
+	cs, err := ChangedFilesAgainstBase(ctx, parent, "")
+	require.NoError(err)
+
+	for _, f := range cs.Files {
+		assert.NotContains(f.Path, ".worktrees/test",
+			"nested worktree dir should not appear as an untracked entry",
+		)
+	}
+}
+
 func TestResolveBaseHonorsOverride(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available on PATH")
