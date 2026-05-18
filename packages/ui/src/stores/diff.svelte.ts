@@ -1,4 +1,18 @@
-import type { DiffResult, FilesResult, CommitInfo } from "../api/types.js";
+import type {
+  DiffFile,
+  DiffResult,
+  FilesResult,
+  CommitInfo,
+} from "../api/types.js";
+
+function sortFilesByPath<T extends { files?: DiffFile[] }>(result: T): T {
+  if (result.files) {
+    result.files = [...result.files].sort((a, b) =>
+      a.path.localeCompare(b.path),
+    );
+  }
+  return result;
+}
 
 export type DiffScope =
   | { kind: "head" }
@@ -428,8 +442,8 @@ export function createDiffStore(opts?: DiffStoreOptions) {
         (reloadQs ? `?${reloadQs}` : "");
       const data = await fetchJSON(url, ac.signal);
       if (abortController !== ac) return;
-      diff = data as DiffResult;
-      setActiveIfNeeded((data as DiffResult).files);
+      diff = sortFilesByPath(data as DiffResult);
+      setActiveIfNeeded(diff.files);
     } catch (err) {
       if (ac.signal.aborted) return;
       if (abortController !== ac) return;
@@ -542,8 +556,8 @@ export function createDiffStore(opts?: DiffStoreOptions) {
           filesAc.signal,
         );
         if (fileListAbortController !== filesAc) return;
-        fileList = data as FilesResult;
-        setActiveIfNeeded((data as FilesResult).files);
+        fileList = sortFilesByPath(data as FilesResult);
+        setActiveIfNeeded(fileList.files);
       } catch {
         if (filesAc.signal.aborted) return;
         if (fileListAbortController !== filesAc) return;
@@ -566,8 +580,8 @@ export function createDiffStore(opts?: DiffStoreOptions) {
         const url = `${prefix}/diff${qs ? `?${qs}` : ""}`;
         const data = await fetchJSON(url, diffAc.signal);
         if (abortController !== diffAc) return;
-        diff = data as DiffResult;
-        setActiveIfNeeded((data as DiffResult).files);
+        diff = sortFilesByPath(data as DiffResult);
+        setActiveIfNeeded(diff.files);
       } catch (_err) {
         if (diffAc.signal.aborted) return;
         if (abortController !== diffAc) return;

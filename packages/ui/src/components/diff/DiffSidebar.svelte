@@ -18,8 +18,9 @@
   interface FileGroup { dir: string; files: DiffFile[] }
 
   function groupByDir(files: DiffFile[]): FileGroup[] {
-    // Group all files with the same directory together regardless of
-    // input order — API can return files in diff order, not path-sorted.
+    // Bucket consecutive same-dir files under a directory header. The
+    // store sorts files by path before we see them, so this preserves
+    // order and the buckets line up 1:1 with DiffView's render order.
     const map = new Map<string, DiffFile[]>();
     for (const f of files) {
       const i = f.path.lastIndexOf("/");
