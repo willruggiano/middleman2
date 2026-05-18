@@ -304,6 +304,27 @@ type stackContextResponse struct {
 	Members   []stackMemberResponse `json:"members"`
 }
 
+// worktreeResponse is one local git worktree discovered under a
+// repo's configured local_path. Surfaces in the Open sidebar
+// alongside GitHub PRs.
+type worktreeResponse struct {
+	ID           int64  `json:"id"`
+	RepoOwner    string `json:"repo_owner"`
+	RepoName     string `json:"repo_name"`
+	Path         string `json:"path"`
+	Branch       string `json:"branch,omitempty"`
+	HeadSHA      string `json:"head_sha,omitempty"`
+	IsDetached   bool   `json:"is_detached,omitempty"`
+	IsLocked     bool   `json:"is_locked,omitempty"`
+	IsPrunable   bool   `json:"is_prunable,omitempty"`
+	DiscoveredAt string `json:"discovered_at" doc:"UTC RFC3339 timestamp of when sync first saw this worktree"`
+	LastSeenAt   string `json:"last_seen_at" doc:"UTC RFC3339 timestamp of the most recent scan that observed this worktree"`
+}
+
+type worktreesResponse struct {
+	Worktrees []worktreeResponse `json:"worktrees"`
+}
+
 type activityItemResponse struct {
 	ID           string `json:"id"`
 	Cursor       string `json:"cursor"`

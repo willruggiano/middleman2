@@ -817,6 +817,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/worktrees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get worktrees */
+        get: operations["get-worktrees"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1985,6 +2002,31 @@ export interface components {
             worktree_branch?: string;
             worktree_key: string;
             worktree_path?: string;
+        };
+        WorktreeResponse: {
+            branch?: string;
+            /** @description UTC RFC3339 timestamp of when sync first saw this worktree */
+            discovered_at: string;
+            head_sha?: string;
+            /** Format: int64 */
+            id: number;
+            is_detached?: boolean;
+            is_locked?: boolean;
+            is_prunable?: boolean;
+            /** @description UTC RFC3339 timestamp of the most recent scan that observed this worktree */
+            last_seen_at: string;
+            path: string;
+            repo_name: string;
+            repo_owner: string;
+        };
+        WorktreesResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/WorktreesResponse.json
+             */
+            readonly $schema?: string;
+            worktrees: components["schemas"]["WorktreeResponse"][] | null;
         };
     };
     responses: never;
@@ -4042,6 +4084,35 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-worktrees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorktreesResponse"];
+                };
             };
             /** @description Error */
             default: {

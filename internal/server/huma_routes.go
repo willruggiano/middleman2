@@ -383,6 +383,7 @@ func (s *Server) registerAPI(api huma.API) {
 	}, s.deleteAuthorGroup)
 
 	huma.Get(api, "/repos", s.listRepos)
+	huma.Get(api, "/worktrees", s.listWorktrees)
 	huma.Get(api, "/repos/{owner}/{name}", s.getRepo)
 	huma.Get(api, "/repos/{owner}/{name}/comment-autocomplete", s.getCommentAutocomplete)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/approve", s.approvePR)
@@ -1724,6 +1725,34 @@ func (s *Server) listRepos(ctx context.Context, _ *struct{}) (*listReposOutput, 
 	}
 
 	return &listReposOutput{Body: repos}, nil
+}
+
+type listWorktreesOutput struct {
+	Body worktreesResponse
+}
+
+func (s *Server) listWorktrees(ctx context.Context, _ *struct{}) (*listWorktreesOutput, error) {
+	rows, err := s.db.ListAllActiveWorktrees(ctx)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("list worktrees failed")
+	}
+	out := worktreesResponse{Worktrees: make([]worktreeResponse, 0, len(rows))}
+	for _, w := range rows {
+		out.Worktrees = append(out.Worktrees, worktreeResponse{
+			ID:           w.ID,
+			RepoOwner:    w.RepoOwner,
+			RepoName:     w.RepoName,
+			Path:         w.Path,
+			Branch:       w.Branch,
+			HeadSHA:      w.HeadSHA,
+			IsDetached:   w.IsDetached,
+			IsLocked:     w.IsLocked,
+			IsPrunable:   w.IsPrunable,
+			DiscoveredAt: formatUTCRFC3339(w.DiscoveredAt),
+			LastSeenAt:   formatUTCRFC3339(w.LastSeenAt),
+		})
+	}
+	return &listWorktreesOutput{Body: out}, nil
 }
 
 func (s *Server) triggerSync(ctx context.Context, _ *struct{}) (*acceptedOutput, error) {
