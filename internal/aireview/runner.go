@@ -639,6 +639,10 @@ type BriefInput struct {
 	// PromptContext gets appended to the prompt — the PR title/
 	// branches/body so Claude has some framing beyond the diff.
 	PromptContext string
+	// LocalWorktreePath, when set, names an existing on-disk
+	// worktree the runner should use directly. Mirrors the same
+	// field on CreateThreadInput.
+	LocalWorktreePath string
 }
 
 // CreateBrief queues a new brief, spawns Claude asynchronously, and
@@ -646,7 +650,7 @@ type BriefInput struct {
 // (or failed) in the background. Callers poll GetAIBrief to see
 // progress.
 func (r *Runner) CreateBrief(ctx context.Context, in BriefInput) (db.AIBrief, error) {
-	if r.clones == nil {
+	if in.LocalWorktreePath == "" && r.clones == nil {
 		return db.AIBrief{}, errors.New("clone manager not configured")
 	}
 	if in.HeadSHA == "" {
@@ -662,13 +666,21 @@ func (r *Runner) CreateBrief(ctx context.Context, in BriefInput) (db.AIBrief, er
 		return db.AIBrief{}, err
 	}
 
-	worktree, err := r.provisionWorktree(ctx, in.Owner, in.Name, in.HeadSHA, briefWorktreeKey(brief.ID))
-	if err != nil {
-		_ = r.db.MarkAIBriefFailed(ctx, brief.ID, "provision worktree: "+err.Error())
-		return db.AIBrief{}, fmt.Errorf("provision worktree: %w", err)
+	// Local sources reuse the existing worktree on disk; PR sources
+	// provision an ephemeral one from the bare clone.
+	worktree := in.LocalWorktreePath
+	if worktree == "" {
+		worktree, err = r.provisionWorktree(ctx, in.Owner, in.Name, in.HeadSHA, briefWorktreeKey(brief.ID))
+		if err != nil {
+			_ = r.db.MarkAIBriefFailed(ctx, brief.ID, "provision worktree: "+err.Error())
+			return db.AIBrief{}, fmt.Errorf("provision worktree: %w", err)
+		}
 	}
 
-	cachedShas := r.cachePRCommits(ctx, in.Owner, in.Name, worktree, in.MergeBaseSHA, in.HeadSHA)
+	var cachedShas []string
+	if in.LocalWorktreePath == "" {
+		cachedShas = r.cachePRCommits(ctx, in.Owner, in.Name, worktree, in.MergeBaseSHA, in.HeadSHA)
+	}
 
 	r.spawnBrief(brief, worktree, in, cachedShas)
 	brief.WorktreePath = &worktree
@@ -688,9 +700,12 @@ func (r *Runner) CancelBrief(ctx context.Context, id int64) error {
 func (r *Runner) DeleteBrief(ctx context.Context, id int64) error {
 	// Cancel any in-flight subprocess first.
 	_ = r.CancelBrief(ctx, id)
-	// Remove the worktree best-effort.
+	// Remove the worktree best-effort, but only if it's one we
+	// provisioned. Local-source briefs run inside the user's own
+	// worktree — never destroy that.
 	brief, err := r.db.GetAIBrief(ctx, id)
-	if err == nil && brief.WorktreePath != nil && *brief.WorktreePath != "" {
+	if err == nil && brief.WorktreePath != nil && *brief.WorktreePath != "" &&
+		r.isManagedWorktreePath(*brief.WorktreePath) {
 		r.removeWorktree(ctx, "", "", *brief.WorktreePath)
 	}
 	return r.db.DeleteAIBrief(ctx, id)

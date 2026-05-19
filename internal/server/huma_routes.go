@@ -2470,9 +2470,7 @@ type listPatchsetsOutput struct {
 // sync) for the given PR in oldest-first order. Used by the review
 // surface to render the Gerrit-style PS chip strip.
 func (s *Server) listPatchsets(ctx context.Context, input *repoNumberInput) (*listPatchsetsOutput, error) {
-	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{
-		owner: input.Owner, name: input.Name, number: input.Number,
-	})
+	mrID, err := s.resolveOrEnsureMRID(ctx, input.Owner, input.Name, input.Number)
 	if err != nil {
 		return nil, huma.Error404NotFound("pull request not found")
 	}

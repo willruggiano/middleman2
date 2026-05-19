@@ -475,6 +475,10 @@ func (s *Server) createAIBrief(ctx context.Context, input *createBriefInput) (*a
 		return nil, huma.Error503ServiceUnavailable("AI brief not available: clone manager or worktree dir not configured")
 	}
 
+	if isLocalSource(input.Owner) {
+		return s.createAIBriefLocal(ctx, input)
+	}
+
 	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
 	if err != nil {
 		return nil, huma.Error404NotFound("pull request not found")
@@ -543,8 +547,73 @@ func (s *Server) createAIBrief(ctx context.Context, input *createBriefInput) (*a
 	return &aiBriefOutput{Body: toBriefResponse(brief)}, nil
 }
 
+// createAIBriefLocal builds the brief for a local worktree. Mirrors
+// the GitHub path but pulls SHAs / commit log from the worktree
+// directory instead of the bare clone, and points the runner at the
+// existing worktree via LocalWorktreePath.
+func (s *Server) createAIBriefLocal(
+	ctx context.Context, input *createBriefInput,
+) (*aiBriefOutput, error) {
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	mrID, err := s.ensureSyntheticMRForWorktree(ctx, w)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("ensure synthetic MR: " + err.Error())
+	}
+
+	baseRef := s.lookupBaseRefForWorktree(ctx, *w)
+	base, err := worktrees.ResolveBase(ctx, w.Path, baseRef)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("resolve base: " + err.Error())
+	}
+	if base.Fallback {
+		return nil, huma.Error409Conflict("worktree has no remote base ref to summarize against")
+	}
+
+	gitLog, _ := runGitLogForBrief(ctx, w.Path, base.SHA, w.HeadSHA)
+
+	branch := w.Branch
+	if branch == "" {
+		branch = "(detached)"
+	}
+	var ctxBuf strings.Builder
+	ctxBuf.WriteString(fmt.Sprintf("Local worktree: %s\n", w.Path))
+	ctxBuf.WriteString(fmt.Sprintf("Branch: %s vs %s\n", branch, base.Ref))
+	ctxBuf.WriteString(fmt.Sprintf("Base: %s  Head: %s\n",
+		base.SHA[:min(7, len(base.SHA))],
+		w.HeadSHA[:min(7, len(w.HeadSHA))],
+	))
+	if gitLog != "" {
+		ctxBuf.WriteString("\nCommit log (oldest first):\n")
+		ctxBuf.WriteString(gitLog)
+		ctxBuf.WriteString("\n")
+	}
+
+	depth := strings.ToLower(strings.TrimSpace(input.Body.Depth))
+	if depth == "" {
+		depth = "quick"
+	}
+
+	brief, err := s.aiReview.CreateBrief(ctx, aireview.BriefInput{
+		MergeRequestID:    mrID,
+		Owner:             input.Owner,
+		Name:              input.Name,
+		HeadSHA:           w.HeadSHA,
+		MergeBaseSHA:      base.SHA,
+		Depth:             depth,
+		PromptContext:     ctxBuf.String(),
+		LocalWorktreePath: w.Path,
+	})
+	if err != nil {
+		return nil, huma.Error502BadGateway("create brief: " + err.Error())
+	}
+	return &aiBriefOutput{Body: toBriefResponse(brief)}, nil
+}
+
 func (s *Server) getAIBrief(ctx context.Context, input *briefPathInput) (*aiBriefOutput, error) {
-	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
+	mrID, err := s.resolveOrEnsureMRID(ctx, input.Owner, input.Name, input.Number)
 	if err != nil {
 		return nil, huma.Error404NotFound("pull request not found")
 	}
@@ -559,7 +628,7 @@ func (s *Server) deleteAIBrief(ctx context.Context, input *briefPathInput) (*emp
 	if s.aiReview == nil {
 		return nil, huma.Error503ServiceUnavailable("AI brief not available")
 	}
-	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
+	mrID, err := s.resolveOrEnsureMRID(ctx, input.Owner, input.Name, input.Number)
 	if err != nil {
 		return nil, huma.Error404NotFound("pull request not found")
 	}
