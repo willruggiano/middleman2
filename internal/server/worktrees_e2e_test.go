@@ -7,11 +7,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	Assert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wesm/middleman/internal/apiclient/generated"
+	"github.com/wesm/middleman/internal/aireview"
 	"github.com/wesm/middleman/internal/db"
+	ghclient "github.com/wesm/middleman/internal/github"
+	"github.com/wesm/middleman/internal/gitclone"
 )
 
 func TestAPIListWorktreesEmpty(t *testing.T) {
@@ -487,6 +491,113 @@ func TestAPILocalDispatchBlobRangeServesWorktreeFiles(t *testing.T) {
 	require.NotNil(pastResp.JSON200)
 	require.NotNil(pastResp.JSON200.Lines)
 	assert.Len(*pastResp.JSON200.Lines, 5)
+}
+
+// TestAPILocalDispatchAIThreadAcceptsRangeAnchor pins the contract
+// the rendered markdown view (and the diff view) rely on: the AI
+// thread create endpoint accepts an anchor of {path, anchor_line,
+// anchor_side, commit_sha, hunk_start_line, hunk_end_line} for a
+// local worktree, persists it, and returns it on subsequent reads.
+func TestAPILocalDispatchAIThreadAcceptsRangeAnchor(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := Assert.New(t)
+
+	// AI threads require the server to have a clone manager and worktree
+	// dir configured (otherwise s.aiReview is nil and the endpoint returns
+	// 503). For local worktrees, Runner.CreateThread uses
+	// LocalWorktreePath and skips the clone manager, but the server must
+	// still be initialised with a non-nil clones value. A stub fake-claude
+	// binary keeps the question runner from hanging in CI.
+	dir := t.TempDir()
+	bareDir := filepath.Join(dir, "clones")
+	require.NoError(os.MkdirAll(bareDir, 0o755))
+	claudeBin := filepath.Join(dir, "claude")
+	require.NoError(os.WriteFile(claudeBin, []byte(`#!/bin/sh
+cat <<'EOF'
+{"type":"result","subtype":"success","is_error":false,"result":"fake","session_id":"s1"}
+EOF
+`), 0o755))
+	aireview.SetBinaryForTest(claudeBin)
+	t.Cleanup(func() { aireview.SetBinaryForTest("claude") })
+
+	database := openTestDB(t)
+	clones := gitclone.New(bareDir, nil)
+	mock := &mockGH{}
+	syncer := ghclient.NewSyncer(
+		map[string]ghclient.Client{"github.com": mock},
+		database, nil,
+		[]ghclient.RepoRef{{Owner: "acme", Name: "widget", PlatformHost: "github.com"}},
+		time.Minute, nil, nil,
+	)
+	t.Cleanup(syncer.Stop)
+	srv := New(database, syncer, nil, "/", nil, ServerOptions{
+		Clones:      clones,
+		WorktreeDir: filepath.Join(dir, "worktrees"),
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	})
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+
+	repoDir := filepath.Join(dir, "repo")
+	require.NoError(os.MkdirAll(repoDir, 0o755))
+	runGitWT(t, "", "init", "--initial-branch=main", repoDir)
+	runGitWT(t, repoDir, "config", "user.email", "test@example.com")
+	runGitWT(t, repoDir, "config", "user.name", "Test")
+	require.NoError(os.WriteFile(filepath.Join(repoDir, "doc.md"),
+		[]byte("line one\nline two\nline three\n"), 0o644))
+	runGitWT(t, repoDir, "add", "doc.md")
+	runGitWT(t, repoDir, "commit", "-m", "init")
+	headOut, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+	require.NoError(err)
+	headSHA := string(headOut[:len(headOut)-1])
+
+	repoID, err := database.UpsertLocalRepo(ctx, "demo")
+	require.NoError(err)
+	canonDir, err := filepath.EvalSymlinks(repoDir)
+	require.NoError(err)
+	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+		Path:   canonDir,
+		Branch: "main",
+	})
+	require.NoError(err)
+
+	docPath := "doc.md"
+	hunkStart, hunkEnd := int64(1), int64(2)
+	body := generated.PostReposByOwnerByNamePullsByNumberAiThreadsJSONRequestBody{
+		Path:          docPath,
+		AnchorLine:    2,
+		AnchorSide:    "RIGHT",
+		CommitSha:     headSHA,
+		HunkStartLine: &hunkStart,
+		HunkEndLine:   &hunkEnd,
+		Question:      "What does this section say?",
+	}
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberAiThreadsWithResponse(
+		ctx, "local", "demo", w.ID, body,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	require.NotNil(createResp.JSON200)
+
+	listResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberAiThreadsWithResponse(
+		ctx, "local", "demo", w.ID, nil,
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, listResp.StatusCode())
+	require.NotNil(listResp.JSON200)
+	require.NotNil(listResp.JSON200.Threads)
+	threads := *listResp.JSON200.Threads
+	require.Len(threads, 1)
+	assert.Equal(docPath, threads[0].Path)
+	assert.EqualValues(2, threads[0].AnchorLine)
+	assert.Equal("RIGHT", threads[0].AnchorSide)
 }
 
 func runGitWT(t *testing.T, dir string, args ...string) {
