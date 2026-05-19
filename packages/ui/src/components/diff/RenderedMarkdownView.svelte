@@ -447,6 +447,14 @@
       }
       el.after(wrap);
     }
+
+    // Cleanup on component teardown so the imperatively-mounted
+    // cards don't keep their reactive effects alive after the
+    // rendered view unmounts.
+    return () => {
+      for (const inst of mountedInstances) unmount(inst);
+      mountedInstances.clear();
+    };
   });
 </script>
 
