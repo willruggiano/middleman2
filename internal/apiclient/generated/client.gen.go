@@ -831,6 +831,15 @@ type ResolveItemResponse struct {
 	RepoTracked bool   `json:"repo_tracked"`
 }
 
+// RunningTurnsResponse defines model for RunningTurnsResponse.
+type RunningTurnsResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// WorktreeIds Worktree ids that currently have an active Claude session with a queued or running response turn. Suitable for fast polling (~3s).
+	WorktreeIds *[]int64 `json:"worktree_ids"`
+}
+
 // SessionResponse defines model for SessionResponse.
 type SessionResponse struct {
 	ClaudeSessionId *string `json:"claude_session_id,omitempty"`
@@ -849,6 +858,9 @@ type SessionTurnResponse struct {
 	Error        *string `json:"error,omitempty"`
 	Id           int64   `json:"id"`
 	MetadataJson *string `json:"metadata_json,omitempty"`
+
+	// RawJson Structured stream-json from claude for claude_response turns. Shape: {session_id, events: [{type:text|tool_use|tool_result, ...}]}. Empty until the first event arrives.
+	RawJson *string `json:"raw_json,omitempty"`
 
 	// Status For claude_response: queued | running | done | failed | cancelled. User turns are always done.
 	Status string `json:"status"`
@@ -1084,12 +1096,15 @@ type WorktreeResponse struct {
 	Branch *string `json:"branch,omitempty"`
 
 	// DiscoveredAt UTC RFC3339 timestamp of when sync first saw this worktree
-	DiscoveredAt string  `json:"discovered_at"`
-	HeadSha      *string `json:"head_sha,omitempty"`
-	Id           int64   `json:"id"`
-	IsDetached   *bool   `json:"is_detached,omitempty"`
-	IsLocked     *bool   `json:"is_locked,omitempty"`
-	IsPrunable   *bool   `json:"is_prunable,omitempty"`
+	DiscoveredAt string `json:"discovered_at"`
+
+	// HasRunningTurn True when this worktree has an active Claude session with a queued or running response turn
+	HasRunningTurn *bool   `json:"has_running_turn,omitempty"`
+	HeadSha        *string `json:"head_sha,omitempty"`
+	Id             int64   `json:"id"`
+	IsDetached     *bool   `json:"is_detached,omitempty"`
+	IsLocked       *bool   `json:"is_locked,omitempty"`
+	IsPrunable     *bool   `json:"is_prunable,omitempty"`
 
 	// LastSeenAt UTC RFC3339 timestamp of the most recent scan that observed this worktree
 	LastSeenAt string `json:"last_seen_at"`
@@ -1571,6 +1586,9 @@ type ClientInterface interface {
 
 	// GetWorktrees request
 	GetWorktrees(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetWorktreesRunningTurns request
+	GetWorktreesRunningTurns(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetWorktreesByIdChangedFiles request
 	GetWorktreesByIdChangedFiles(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2601,6 +2619,18 @@ func (c *Client) GetWorkspacesById(ctx context.Context, id string, reqEditors ..
 
 func (c *Client) GetWorktrees(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetWorktreesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetWorktreesRunningTurns(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetWorktreesRunningTurnsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -6328,6 +6358,33 @@ func NewGetWorktreesRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetWorktreesRunningTurnsRequest generates requests for GetWorktreesRunningTurns
+func NewGetWorktreesRunningTurnsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/worktrees/running-turns")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetWorktreesByIdChangedFilesRequest generates requests for GetWorktreesByIdChangedFiles
 func NewGetWorktreesByIdChangedFilesRequest(server string, id int64) (*http.Request, error) {
 	var err error
@@ -6676,6 +6733,9 @@ type ClientWithResponsesInterface interface {
 
 	// GetWorktreesWithResponse request
 	GetWorktreesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetWorktreesResponse, error)
+
+	// GetWorktreesRunningTurnsWithResponse request
+	GetWorktreesRunningTurnsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetWorktreesRunningTurnsResponse, error)
 
 	// GetWorktreesByIdChangedFilesWithResponse request
 	GetWorktreesByIdChangedFilesWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*GetWorktreesByIdChangedFilesResponse, error)
@@ -8190,6 +8250,29 @@ func (r GetWorktreesResponse) StatusCode() int {
 	return 0
 }
 
+type GetWorktreesRunningTurnsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *RunningTurnsResponse
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetWorktreesRunningTurnsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetWorktreesRunningTurnsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetWorktreesByIdChangedFilesResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
@@ -8988,6 +9071,15 @@ func (c *ClientWithResponses) GetWorktreesWithResponse(ctx context.Context, reqE
 		return nil, err
 	}
 	return ParseGetWorktreesResponse(rsp)
+}
+
+// GetWorktreesRunningTurnsWithResponse request returning *GetWorktreesRunningTurnsResponse
+func (c *ClientWithResponses) GetWorktreesRunningTurnsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetWorktreesRunningTurnsResponse, error) {
+	rsp, err := c.GetWorktreesRunningTurns(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetWorktreesRunningTurnsResponse(rsp)
 }
 
 // GetWorktreesByIdChangedFilesWithResponse request returning *GetWorktreesByIdChangedFilesResponse
@@ -11085,6 +11177,39 @@ func ParseGetWorktreesResponse(rsp *http.Response) (*GetWorktreesResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest WorktreesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetWorktreesRunningTurnsResponse parses an HTTP response from a GetWorktreesRunningTurnsWithResponse call
+func ParseGetWorktreesRunningTurnsResponse(rsp *http.Response) (*GetWorktreesRunningTurnsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetWorktreesRunningTurnsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RunningTurnsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

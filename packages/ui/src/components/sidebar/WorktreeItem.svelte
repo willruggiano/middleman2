@@ -49,6 +49,13 @@
   {#if branchLabel}
     <span class="worktree-item__branch">{branchLabel}</span>
   {/if}
+  {#if worktree.has_running_turn}
+    <span
+      class="worktree-item__pulse"
+      aria-label="Claude is working in this worktree"
+      title="Claude is working"
+    ></span>
+  {/if}
   {#if worktree.is_locked}
     <span class="worktree-item__flag" title="Locked worktree">L</span>
   {/if}
@@ -133,5 +140,27 @@
 
   .worktree-item--prunable .worktree-item__flag {
     color: var(--accent-red);
+  }
+
+  .worktree-item__pulse {
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-blue);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-blue) 80%, transparent);
+    animation: worktree-pulse 1.4s ease-out infinite;
+  }
+
+  @keyframes worktree-pulse {
+    0% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-blue) 60%, transparent);
+    }
+    70% {
+      box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent-blue) 0%, transparent);
+    }
+    100% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-blue) 0%, transparent);
+    }
   }
 </style>

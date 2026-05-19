@@ -385,6 +385,7 @@ func (s *Server) registerAPI(api huma.API) {
 
 	huma.Get(api, "/repos", s.listRepos)
 	huma.Get(api, "/worktrees", s.listWorktrees)
+	huma.Get(api, "/worktrees/running-turns", s.listWorktreesRunningTurns)
 	huma.Get(api, "/worktrees/{id}/changed-files", s.getWorktreeChangedFiles)
 	huma.Get(api, "/worktrees/{id}/diff", s.getWorktreeDiff)
 	huma.Get(api, "/repos/{owner}/{name}", s.getRepo)
@@ -1846,25 +1847,58 @@ func (s *Server) getWorktreeDiff(
 	}}, nil
 }
 
+type runningTurnsResponse struct {
+	WorktreeIDs []int64 `json:"worktree_ids" doc:"Worktree ids that currently have an active Claude session with a queued or running response turn. Suitable for fast polling (~3s)."`
+}
+
+type listRunningTurnsOutput struct {
+	Body runningTurnsResponse
+}
+
+// listWorktreesRunningTurns is a focused endpoint that returns only
+// the worktree ids with in-flight Claude turns. The sidebar polls
+// this on a tight cadence (~3s) so the "Claude is working" indicator
+// appears within a couple seconds of submit, without re-running the
+// heavier /worktrees join.
+func (s *Server) listWorktreesRunningTurns(
+	ctx context.Context, _ *struct{},
+) (*listRunningTurnsOutput, error) {
+	running, err := s.db.WorktreeIDsWithRunningTurns(ctx)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			"list running turns: " + err.Error(),
+		)
+	}
+	ids := make([]int64, 0, len(running))
+	for id := range running {
+		ids = append(ids, id)
+	}
+	return &listRunningTurnsOutput{Body: runningTurnsResponse{WorktreeIDs: ids}}, nil
+}
+
 func (s *Server) listWorktrees(ctx context.Context, _ *struct{}) (*listWorktreesOutput, error) {
 	rows, err := s.db.ListAllActiveWorktrees(ctx)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("list worktrees failed")
 	}
+	// Best-effort: a failure here just suppresses the indicator,
+	// so don't fail the whole worktrees list.
+	running, _ := s.db.WorktreeIDsWithRunningTurns(ctx)
 	out := worktreesResponse{Worktrees: make([]worktreeResponse, 0, len(rows))}
 	for _, w := range rows {
 		out.Worktrees = append(out.Worktrees, worktreeResponse{
-			ID:           w.ID,
-			RepoOwner:    w.RepoOwner,
-			RepoName:     w.RepoName,
-			Path:         w.Path,
-			Branch:       w.Branch,
-			HeadSHA:      w.HeadSHA,
-			IsDetached:   w.IsDetached,
-			IsLocked:     w.IsLocked,
-			IsPrunable:   w.IsPrunable,
-			DiscoveredAt: formatUTCRFC3339(w.DiscoveredAt),
-			LastSeenAt:   formatUTCRFC3339(w.LastSeenAt),
+			ID:             w.ID,
+			RepoOwner:      w.RepoOwner,
+			RepoName:       w.RepoName,
+			Path:           w.Path,
+			Branch:         w.Branch,
+			HeadSHA:        w.HeadSHA,
+			IsDetached:     w.IsDetached,
+			IsLocked:       w.IsLocked,
+			IsPrunable:     w.IsPrunable,
+			DiscoveredAt:   formatUTCRFC3339(w.DiscoveredAt),
+			LastSeenAt:     formatUTCRFC3339(w.LastSeenAt),
+			HasRunningTurn: running[w.ID],
 		})
 	}
 	return &listWorktreesOutput{Body: out}, nil

@@ -317,8 +317,9 @@ type worktreeResponse struct {
 	IsDetached   bool   `json:"is_detached,omitempty"`
 	IsLocked     bool   `json:"is_locked,omitempty"`
 	IsPrunable   bool   `json:"is_prunable,omitempty"`
-	DiscoveredAt string `json:"discovered_at" doc:"UTC RFC3339 timestamp of when sync first saw this worktree"`
-	LastSeenAt   string `json:"last_seen_at" doc:"UTC RFC3339 timestamp of the most recent scan that observed this worktree"`
+	DiscoveredAt    string `json:"discovered_at" doc:"UTC RFC3339 timestamp of when sync first saw this worktree"`
+	LastSeenAt      string `json:"last_seen_at" doc:"UTC RFC3339 timestamp of the most recent scan that observed this worktree"`
+	HasRunningTurn  bool   `json:"has_running_turn,omitempty" doc:"True when this worktree has an active Claude session with a queued or running response turn"`
 }
 
 type worktreesResponse struct {

@@ -24,6 +24,7 @@ type sessionTurnResponse struct {
 	Status       string `json:"status" doc:"For claude_response: queued | running | done | failed | cancelled. User turns are always done."`
 	Error        string `json:"error,omitempty"`
 	MetadataJSON string `json:"metadata_json,omitempty"`
+	RawJSON      string `json:"raw_json,omitempty" doc:"Structured stream-json from claude for claude_response turns. Shape: {session_id, events: [{type:text|tool_use|tool_result, ...}]}. Empty until the first event arrives."`
 	CreatedAt    string `json:"created_at" doc:"UTC RFC3339 timestamp"`
 }
 
@@ -277,6 +278,7 @@ func toSessionTurnResponse(t db.WorktreeSessionTurn) sessionTurnResponse {
 		Status:       t.Status,
 		Error:        t.Error,
 		MetadataJSON: t.MetadataJSON,
+		RawJSON:      t.RawJSON,
 		CreatedAt:    t.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }

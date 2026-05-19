@@ -105,6 +105,33 @@ export function createWorktreesStore(opts: WorktreesStoreOptions) {
     }
   }
 
+  // pollRunningTurns refreshes only the has_running_turn flag on
+  // existing worktree rows. It's much lighter than loadWorktrees
+  // (no row scan, no repo join) so the sidebar can poll it on a
+  // tight cadence to keep the "Claude is working" indicator fresh.
+  async function pollRunningTurns(): Promise<void> {
+    try {
+      const { data, error } = await apiClient.GET(
+        "/worktrees/running-turns",
+        {},
+      );
+      if (error) return; // silent failure — indicator just won't refresh
+      const ids = new Set<number>(data?.worktree_ids ?? []);
+      let changed = false;
+      const next: LocalWorktree[] = worktrees.map((w) => {
+        const has = ids.has(w.id);
+        if ((w.has_running_turn ?? false) === has) return w;
+        changed = true;
+        return { ...w, has_running_turn: has };
+      });
+      if (changed) {
+        worktrees = next;
+      }
+    } catch {
+      // swallow — see above
+    }
+  }
+
   async function loadChangedFiles(id: number): Promise<void> {
     const prev = changedFilesById[id] ?? {
       base: null,
@@ -200,6 +227,7 @@ export function createWorktreesStore(opts: WorktreesStoreOptions) {
     getById,
     worktreesByRepo,
     loadWorktrees,
+    pollRunningTurns,
     getChangedFiles,
     loadChangedFiles,
     getDiff,

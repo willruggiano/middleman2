@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { getStores } from "../../context.js";
   import { renderMarkdown } from "../../utils/markdown.js";
+  import SessionToolTimeline from "./SessionToolTimeline.svelte";
 
   // Conversation pane for a local worktree session. Renders the
   // back-and-forth between the reviewer (review_feedback +
@@ -162,13 +163,16 @@
           {#if t.error}
             <pre class="turn__error">{t.error}</pre>
           {/if}
+          {#if t.turn_type === "claude_response" && t.raw_json}
+            <SessionToolTimeline rawJSON={t.raw_json} />
+          {/if}
           {#if t.content}
             <div class="turn__body markdown-body">
               {@html renderMarkdown(t.content, { owner, name })}
             </div>
           {:else if t.status === "running" || t.status === "queued"}
             <div class="turn__body turn__body--muted">
-              Claude is working on this — the response will appear when it's ready.
+              {t.raw_json ? "Working…" : "Claude is working on this — the response will appear when it's ready."}
             </div>
           {/if}
         </article>

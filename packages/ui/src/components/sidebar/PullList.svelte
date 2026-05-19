@@ -122,6 +122,7 @@
   let searchInput = $state(pulls.getSearchQuery() ?? "");
   let debounceHandle: ReturnType<typeof setTimeout> | null = null;
   let refreshHandle: ReturnType<typeof setInterval> | null = null;
+  let runningTurnsHandle: ReturnType<typeof setInterval> | null = null;
 
   $effect(() => {
     // Initial load + 15s background refresh. Intentionally does not
@@ -147,6 +148,16 @@
       void worktrees.loadWorktrees();
     }, 60_000);
 
+    // Tight poll for the "Claude is working" indicator. The endpoint
+    // is a single-query call returning just the worktree ids with an
+    // in-flight turn, so this is cheap enough at 3s cadence to keep
+    // the sidebar dot responsive without piggy-backing on the heavier
+    // /worktrees join.
+    void worktrees.pollRunningTurns();
+    runningTurnsHandle = setInterval(() => {
+      void worktrees.pollRunningTurns();
+    }, 3_000);
+
     let syncDebounce: ReturnType<typeof setTimeout> | null = null;
     const unsub = sync.subscribeSyncComplete(() => {
       if (syncDebounce !== null) clearTimeout(syncDebounce);
@@ -159,6 +170,7 @@
 
     return () => {
       if (refreshHandle !== null) clearInterval(refreshHandle);
+      if (runningTurnsHandle !== null) clearInterval(runningTurnsHandle);
       if (syncDebounce !== null) clearTimeout(syncDebounce);
       unsub();
     };

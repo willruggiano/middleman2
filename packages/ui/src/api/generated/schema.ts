@@ -902,6 +902,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/worktrees/running-turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get worktrees running turns */
+        get: operations["get-worktrees-running-turns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/worktrees/{id}/changed-files": {
         parameters: {
             query?: never;
@@ -1933,6 +1950,16 @@ export interface components {
             number: number;
             repo_tracked: boolean;
         };
+        RunningTurnsResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/RunningTurnsResponse.json
+             */
+            readonly $schema?: string;
+            /** @description Worktree ids that currently have an active Claude session with a queued or running response turn. Suitable for fast polling (~3s). */
+            worktree_ids: number[] | null;
+        };
         SessionResponse: {
             claude_session_id?: string;
             /** Format: int64 */
@@ -1949,6 +1976,8 @@ export interface components {
             /** Format: int64 */
             id: number;
             metadata_json?: string;
+            /** @description Structured stream-json from claude for claude_response turns. Shape: {session_id, events: [{type:text|tool_use|tool_result, ...}]}. Empty until the first event arrives. */
+            raw_json?: string;
             /** @description For claude_response: queued | running | done | failed | cancelled. User turns are always done. */
             status: string;
             /** @description review_feedback | user_message | claude_response | state */
@@ -2202,6 +2231,8 @@ export interface components {
             branch?: string;
             /** @description UTC RFC3339 timestamp of when sync first saw this worktree */
             discovered_at: string;
+            /** @description True when this worktree has an active Claude session with a queued or running response turn */
+            has_running_turn?: boolean;
             head_sha?: string;
             /** Format: int64 */
             id: number;
@@ -4440,6 +4471,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorktreesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-worktrees-running-turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunningTurnsResponse"];
                 };
             };
             /** @description Error */

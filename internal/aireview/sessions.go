@@ -1,6 +1,7 @@
 package aireview
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -194,9 +195,16 @@ func (r *SessionRunner) runTurn(
 		return
 	}
 
+	// stream-json gives us the tool_use / tool_result blocks alongside
+	// the text. We accumulate events as they arrive and flush them to
+	// the turn row so the conversation pane can render Claude's tool
+	// activity in near-real-time instead of waiting for the final
+	// summary. --verbose is required by the CLI for stream-json with
+	// -p.
 	args := []string{
 		"-p", prompt,
-		"--output-format", "json",
+		"--output-format", "stream-json",
+		"--verbose",
 		"--permission-mode", "bypassPermissions",
 		"--allowedTools", "Read,Glob,Grep,Edit,Write,MultiEdit,Bash",
 	}
@@ -229,7 +237,29 @@ func (r *SessionRunner) runTurn(
 		slog.Warn("mark session turn running failed", "turn_id", respTurn.ID, "err", err)
 	}
 
-	raw, readErr := readAll(stdout)
+	state := &streamState{Events: []streamEvent{}}
+	var finalText string
+	var streamErr error
+
+	// Each stream-json line can carry an assistant message with a
+	// large tool_result body, so bump the scanner buffer well past
+	// the default 64 KiB.
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(strings.TrimSpace(string(line))) == 0 {
+			continue
+		}
+		text, ok := r.applyStreamLine(ctx, respTurn.ID, state, line)
+		if ok && text != "" {
+			finalText = text
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		streamErr = err
+	}
+
 	waitErr := cmd.Wait()
 
 	if ctx.Err() != nil {
@@ -241,36 +271,222 @@ func (r *SessionRunner) runTurn(
 		if stderrBuf.Len() > 0 {
 			msg += "\n" + strings.TrimSpace(stderrBuf.String())
 		}
-		if readErr != nil {
-			msg += "\nread: " + readErr.Error()
+		if streamErr != nil {
+			msg += "\nstream: " + streamErr.Error()
 		}
+		// Persist whatever events arrived before the failure so the
+		// reviewer can still see what Claude attempted.
+		r.flushStreamState(ctx, respTurn.ID, state)
 		r.markFailed(ctx, respTurn.ID, msg)
 		return
 	}
-
-	result, err := parseClaudeResult(raw)
-	if err != nil {
-		r.markFailed(ctx, respTurn.ID, fmt.Sprintf("parse claude output: %v\noutput: %s", err, snippet(raw, 400)))
+	if streamErr != nil {
+		r.flushStreamState(ctx, respTurn.ID, state)
+		r.markFailed(ctx, respTurn.ID, "read stream: "+streamErr.Error())
 		return
 	}
 
 	// Persist the session id on first turn so follow-ups can --resume.
-	if sess.ClaudeSessionID == "" && result.SessionID != "" {
-		if err := r.db.SetWorktreeSessionClaudeID(ctx, in.SessionID, result.SessionID); err != nil {
+	if sess.ClaudeSessionID == "" && state.SessionID != "" {
+		if err := r.db.SetWorktreeSessionClaudeID(ctx, in.SessionID, state.SessionID); err != nil {
 			slog.Warn("save claude session id failed", "session_id", in.SessionID, "err", err)
 		}
 	}
 
-	rawStr := string(raw)
+	rawJSON, _ := json.Marshal(state)
+	rawStr := string(rawJSON)
 	done := "done"
 	if err := r.db.UpdateWorktreeSessionTurnFields(ctx, respTurn.ID, db.UpdateWorktreeSessionTurn{
 		Status:   &done,
-		Content:  &result.Text,
+		Content:  &finalText,
 		RawJSON:  &rawStr,
 		ClearPID: true,
 	}); err != nil {
 		slog.Warn("mark session turn done failed", "turn_id", respTurn.ID, "err", err)
 	}
+}
+
+// streamEvent is one normalized step from claude's stream-json output.
+// The frontend renders these as cards (tool calls + results) plus
+// text bubbles, in addition to the final summary stored on
+// turn.content.
+type streamEvent struct {
+	Type      string          `json:"type"` // "text" | "tool_use" | "tool_result"
+	Text      string          `json:"text,omitempty"`
+	Tool      string          `json:"tool,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   string          `json:"content,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
+}
+
+// streamState is what we serialize into the turn's raw_json column.
+// Kept compact so the polling endpoint stays cheap.
+type streamState struct {
+	SessionID string        `json:"session_id,omitempty"`
+	Events    []streamEvent `json:"events"`
+}
+
+// streamMessage is the wire shape claude emits as JSON-lines. We
+// pick out only the fields we care about; unknown fields are
+// ignored.
+type streamMessage struct {
+	Type      string              `json:"type"`
+	Subtype   string              `json:"subtype,omitempty"`
+	SessionID string              `json:"session_id,omitempty"`
+	Message   *streamInnerMessage `json:"message,omitempty"`
+	Result    string              `json:"result,omitempty"`
+	IsError   bool                `json:"is_error,omitempty"`
+}
+
+type streamInnerMessage struct {
+	Role    string               `json:"role"`
+	Content []streamContentBlock `json:"content"`
+}
+
+type streamContentBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   json.RawMessage `json:"content,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
+}
+
+// applyStreamLine parses one JSON-lines record from claude's stream
+// output, mutates state to reflect it, and flushes the partial
+// state to the turn row so the conversation pane reflects progress
+// within a poll cycle. Returns the final summary text if this line
+// was the result message that terminates a turn.
+func (r *SessionRunner) applyStreamLine(
+	ctx context.Context, turnID int64, state *streamState, line []byte,
+) (string, bool) {
+	var msg streamMessage
+	if err := json.Unmarshal(line, &msg); err != nil {
+		// Skip unparseable lines — claude occasionally writes
+		// non-JSON noise (warnings) ahead of the stream.
+		return "", false
+	}
+	dirty := false
+	switch msg.Type {
+	case "system":
+		if msg.SessionID != "" && state.SessionID == "" {
+			state.SessionID = msg.SessionID
+			dirty = true
+		}
+	case "assistant":
+		if msg.Message == nil {
+			break
+		}
+		for _, b := range msg.Message.Content {
+			switch b.Type {
+			case "text":
+				if b.Text != "" {
+					state.Events = append(state.Events, streamEvent{
+						Type: "text",
+						Text: b.Text,
+					})
+					dirty = true
+				}
+			case "tool_use":
+				state.Events = append(state.Events, streamEvent{
+					Type:  "tool_use",
+					Tool:  b.Name,
+					Input: b.Input,
+					ID:    b.ID,
+				})
+				dirty = true
+			}
+		}
+	case "user":
+		if msg.Message == nil {
+			break
+		}
+		for _, b := range msg.Message.Content {
+			if b.Type != "tool_result" {
+				continue
+			}
+			state.Events = append(state.Events, streamEvent{
+				Type:      "tool_result",
+				ToolUseID: b.ToolUseID,
+				Content:   flattenToolResultContent(b.Content),
+				IsError:   b.IsError,
+			})
+			dirty = true
+		}
+	case "result":
+		// Final summary. The result line also (re)states the
+		// session id; capture it if we didn't see system init.
+		if msg.SessionID != "" && state.SessionID == "" {
+			state.SessionID = msg.SessionID
+		}
+		// Flush before returning so the in-flight raw_json reflects
+		// everything we have.
+		r.flushStreamState(ctx, turnID, state)
+		if msg.IsError {
+			return msg.Result, true
+		}
+		return msg.Result, true
+	}
+	if dirty {
+		r.flushStreamState(ctx, turnID, state)
+	}
+	return "", false
+}
+
+// flushStreamState marshals state into raw_json and updates the
+// turn row. Errors are swallowed (logged) — a flush failure
+// shouldn't abort the stream.
+func (r *SessionRunner) flushStreamState(
+	ctx context.Context, turnID int64, state *streamState,
+) {
+	rawJSON, err := json.Marshal(state)
+	if err != nil {
+		slog.Warn("marshal stream state failed", "turn_id", turnID, "err", err)
+		return
+	}
+	raw := string(rawJSON)
+	if err := r.db.UpdateWorktreeSessionTurnFields(ctx, turnID, db.UpdateWorktreeSessionTurn{
+		RawJSON: &raw,
+	}); err != nil {
+		slog.Warn("flush stream state failed", "turn_id", turnID, "err", err)
+	}
+}
+
+// flattenToolResultContent normalizes the wire shape of a
+// tool_result.content field. Claude emits it either as a bare string
+// or as an array of {type:"text", text:"..."} blocks; we present a
+// single string to the frontend.
+func flattenToolResultContent(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	// Try string form first.
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	// Fall back to content array form.
+	var blocks []streamContentBlock
+	if err := json.Unmarshal(raw, &blocks); err == nil {
+		var b strings.Builder
+		for i, blk := range blocks {
+			if blk.Type != "text" {
+				continue
+			}
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(blk.Text)
+		}
+		return b.String()
+	}
+	// Unknown shape — keep raw bytes so reviewers can still see
+	// something.
+	return string(raw)
 }
 
 func (r *SessionRunner) markFailed(ctx context.Context, turnID int64, msg string) {
@@ -348,6 +564,3 @@ func shortSHA(sha string) string {
 	return sha[:7]
 }
 
-// (encoding/json import is reserved for future tool-call rendering;
-// the current implementation only round-trips raw JSON as a string.)
-var _ = json.RawMessage(nil)

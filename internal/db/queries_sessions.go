@@ -224,6 +224,37 @@ func (d *DB) GetWorktreeSessionTurn(
 	return scanWorktreeSessionTurn(row)
 }
 
+// WorktreeIDsWithRunningTurns returns the distinct set of worktree
+// ids that currently have an active session with a claude_response
+// turn in queued or running status. Used by the worktrees list
+// endpoint to drive a sidebar indicator without requiring a separate
+// roundtrip per worktree.
+func (d *DB) WorktreeIDsWithRunningTurns(
+	ctx context.Context,
+) (map[int64]bool, error) {
+	rows, err := d.ro.QueryContext(ctx,
+		`SELECT DISTINCT s.worktree_id
+		   FROM middleman_worktree_session_turns t
+		   JOIN middleman_worktree_sessions s ON s.id = t.session_id
+		  WHERE t.turn_type = 'claude_response'
+		    AND t.status IN ('queued', 'running')
+		    AND s.status = 'active'`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list worktrees with running turns: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64]bool)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan worktree id: %w", err)
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 // ListRunningWorktreeSessionTurns returns every claude_response
 // turn currently marked queued or running across all sessions.
 // Used by the startup reconciler to mark orphaned subprocesses
