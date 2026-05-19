@@ -246,7 +246,8 @@ func TestAPILocalDispatchPRRoutes(t *testing.T) {
 	assert.Equal("local", pullResp.JSON200.RepoOwner)
 	assert.Equal("demo", pullResp.JSON200.RepoName)
 
-	// Default scope: base..HEAD → only the committed file change.
+	// Default scope: base vs working tree → committed work AND
+	// uncommitted edit both appear; this is the full draft view.
 	diffResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberDiffWithResponse(
 		ctx, "local", "demo", w.ID, nil,
 	)
@@ -255,8 +256,9 @@ func TestAPILocalDispatchPRRoutes(t *testing.T) {
 	require.NotNil(diffResp.JSON200)
 	require.NotNil(diffResp.JSON200.Files)
 	defaultFiles := *diffResp.JSON200.Files
-	require.Len(defaultFiles, 1)
-	assert.Equal("feature.txt", defaultFiles[0].Path)
+	require.Len(defaultFiles, 2)
+	defaultPaths := []string{defaultFiles[0].Path, defaultFiles[1].Path}
+	assert.ElementsMatch([]string{"base.txt", "feature.txt"}, defaultPaths)
 
 	// ?commit=WORKING-TREE → only the uncommitted edit.
 	wtCommit := "WORKING-TREE"
@@ -272,7 +274,7 @@ func TestAPILocalDispatchPRRoutes(t *testing.T) {
 	require.Len(wtFiles, 1)
 	assert.Equal("base.txt", wtFiles[0].Path)
 
-	// Files endpoint matches default diff scope.
+	// Files endpoint matches default diff scope — both files appear.
 	filesResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberFilesWithResponse(
 		ctx, "local", "demo", w.ID,
 	)
@@ -280,7 +282,7 @@ func TestAPILocalDispatchPRRoutes(t *testing.T) {
 	require.Equal(http.StatusOK, filesResp.StatusCode())
 	require.NotNil(filesResp.JSON200)
 	require.NotNil(filesResp.JSON200.Files)
-	require.Len(*filesResp.JSON200.Files, 1)
+	require.Len(*filesResp.JSON200.Files, 2)
 
 	// Commits endpoint: the working-tree sentinel is prepended.
 	commitsResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberCommitsWithResponse(

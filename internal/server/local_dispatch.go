@@ -115,10 +115,17 @@ func (s *Server) getPullLocal(
 // getDiffLocal dispatches the PR-shaped diff endpoint to the
 // right git diff invocation based on the scope query params.
 //
-//	(none)                 → base..HEAD (committed work since base)
-//	?commit=WORKING-TREE   → working tree vs HEAD (uncommitted)
+//	(none)                 → base..working-tree (committed + uncommitted +
+//	                         untracked — the full draft state)
+//	?commit=WORKING-TREE   → working tree vs HEAD (uncommitted only)
 //	?commit=<sha>          → that commit's diff (parent..sha)
 //	?from=<sha>&to=<sha>   → arbitrary range from..to
+//
+// The default scope deliberately includes uncommitted work — a
+// worktree is a live draft, not a frozen PR, so "show me what's
+// changed" should mean everything between origin and right-now.
+// The synthetic Uncommitted-changes commit lets reviewers drill
+// into just the uncommitted slice when they want it.
 //
 // Patchset-pair scope is intentionally not handled yet — worktrees
 // don't carry the same observed-patchset history.
@@ -140,7 +147,7 @@ func (s *Server) getDiffLocal(
 		files, err = worktrees.DiffRange(ctx, w.Path, input.From, input.To)
 	default:
 		baseRef := s.lookupBaseRefForWorktree(ctx, *w)
-		ds, dsErr := worktrees.DiffBaseToHEAD(ctx, w.Path, baseRef)
+		ds, dsErr := worktrees.DiffAgainstBase(ctx, w.Path, baseRef)
 		if dsErr != nil {
 			return nil, huma.Error500InternalServerError("worktree diff failed: " + dsErr.Error())
 		}
@@ -212,10 +219,10 @@ func (s *Server) getCommitsLocal(
 }
 
 // getFilesLocal returns the lightweight file list for a worktree's
-// default scope (base..HEAD — committed work only). Mirrors the
-// PR /files endpoint: full-PR file list, no per-commit narrowing.
-// Hunks are stripped so callers paying for the cheap endpoint
-// don't get the full patch payload.
+// default scope — base vs working tree (the same full-draft view
+// getDiffLocal serves when no scope params are passed). Hunks are
+// stripped so callers paying for the cheap endpoint don't get the
+// full patch payload.
 func (s *Server) getFilesLocal(
 	ctx context.Context, input *getFilesInput,
 ) (*getFilesOutput, error) {
@@ -224,7 +231,7 @@ func (s *Server) getFilesLocal(
 		return nil, huma.Error404NotFound("worktree not found")
 	}
 	baseRef := s.lookupBaseRefForWorktree(ctx, *w)
-	ds, err := worktrees.DiffBaseToHEAD(ctx, w.Path, baseRef)
+	ds, err := worktrees.DiffAgainstBase(ctx, w.Path, baseRef)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("worktree files failed: " + err.Error())
 	}
