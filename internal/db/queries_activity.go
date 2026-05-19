@@ -100,6 +100,7 @@ func (d *DB) ListActivity(
 			       '' AS body_preview
 			FROM middleman_merge_requests p
 			JOIN middleman_repos r ON p.repo_id = r.id
+			WHERE r.platform = 'github'
 			UNION ALL
 			SELECT 'new_issue', 'issue', i.id,
 			       r.owner, r.name,
@@ -109,6 +110,7 @@ func (d *DB) ListActivity(
 			       ''
 			FROM middleman_issues i
 			JOIN middleman_repos r ON i.repo_id = r.id
+			WHERE r.platform = 'github'
 			UNION ALL
 			SELECT CASE e.event_type
 			           WHEN 'issue_comment' THEN 'comment'
@@ -125,6 +127,7 @@ func (d *DB) ListActivity(
 			JOIN middleman_repos r ON p.repo_id = r.id
 			WHERE e.event_type IN (
 				'issue_comment', 'review', 'commit', 'force_push')
+			  AND r.platform = 'github'
 			UNION ALL
 			SELECT 'comment', 'ise', e.id,
 			       r.owner, r.name,
@@ -136,6 +139,7 @@ func (d *DB) ListActivity(
 			JOIN middleman_issues i ON e.issue_id = i.id
 			JOIN middleman_repos r ON i.repo_id = r.id
 			WHERE e.event_type = 'issue_comment'
+			  AND r.platform = 'github'
 		) unified
 		%s
 		ORDER BY created_at DESC, source DESC, source_id DESC

@@ -3008,6 +3008,14 @@ func (s *Syncer) buildDetailQueueItems(
 		if rErr != nil || repo == nil {
 			continue
 		}
+		// Skip synthetic MRs from local-platform repos. They exist
+		// to anchor PR-shaped machinery (AI threads, briefs, notes,
+		// session linkage) for worktree drafts and have no GitHub
+		// side to fetch — detail drain against them would attempt
+		// to clone/fetch from a fake "local" hostname.
+		if repo.Platform == "local" {
+			continue
+		}
 		repoKey := repo.PlatformHost + "\x00" + repo.Owner + "/" + repo.Name
 		if !trackedRepos[repoKey] {
 			continue
@@ -3043,6 +3051,9 @@ func (s *Syncer) buildDetailQueueItems(
 	for _, issue := range issues {
 		repo, rErr := s.db.GetRepoByID(ctx, issue.RepoID)
 		if rErr != nil || repo == nil {
+			continue
+		}
+		if repo.Platform == "local" {
 			continue
 		}
 		repoKey := repo.PlatformHost + "\x00" + repo.Owner + "/" + repo.Name
