@@ -2409,6 +2409,9 @@ type blobResponse struct {
 // content can read it directly too. PR-scoped for auth coherence
 // with /diff, /files, etc.
 func (s *Server) getBlob(ctx context.Context, input *getBlobInput) (*getBlobOutput, error) {
+	if isLocalSource(input.Owner) {
+		return s.getBlobLocal(ctx, input)
+	}
 	if s.clones == nil {
 		return nil, huma.Error503ServiceUnavailable("blob not available: clone manager not configured")
 	}

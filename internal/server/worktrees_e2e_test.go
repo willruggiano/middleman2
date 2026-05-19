@@ -298,6 +298,100 @@ func TestAPILocalDispatchPRRoutes(t *testing.T) {
 	assert.Equal("Uncommitted changes", commits[0].Message)
 }
 
+// TestAPILocalDispatchBlobServesWorktreeFiles pins the bug fix where
+// the rendered-markdown view in the diff sidebar 502'd for local
+// worktrees. The /blob endpoint used to go through the bare-clone
+// manager unconditionally; for platform=local repos the clone path
+// doesn't exist, so git cat-file would fail and middleman returned
+// HTTP 502 "read blob: cat-file ...: ...".
+//
+// Two scopes matter for worktrees:
+//   - real commit SHA → read via git cat-file in the worktree's .git
+//   - WORKING-TREE sentinel → read straight from disk (uncommitted)
+func TestAPILocalDispatchBlobServesWorktreeFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	runGitWT(t, "", "init", "--initial-branch=main", dir)
+	runGitWT(t, dir, "config", "user.email", "test@example.com")
+	runGitWT(t, dir, "config", "user.name", "Test")
+
+	committedMD := "# Committed\n\nThis is the committed body.\n"
+	require.NoError(os.WriteFile(filepath.Join(dir, "doc.md"), []byte(committedMD), 0o644))
+	runGitWT(t, dir, "add", "doc.md")
+	runGitWT(t, dir, "commit", "-m", "add doc")
+
+	headOut, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	require.NoError(err)
+	headSHA := string(headOut[:len(headOut)-1]) // strip trailing newline
+
+	// Overwrite on disk so the working tree differs from HEAD.
+	// WORKING-TREE reads should see this content; HEAD-SHA reads
+	// should still see the committed version.
+	workingMD := "# Working\n\nUncommitted edit.\n"
+	require.NoError(os.WriteFile(filepath.Join(dir, "doc.md"), []byte(workingMD), 0o644))
+
+	repoID, err := database.UpsertLocalRepo(ctx, "demo")
+	require.NoError(err)
+	canonDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(err)
+	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+		Path:   canonDir,
+		Branch: "main",
+	})
+	require.NoError(err)
+
+	// 1. Committed content via HEAD SHA.
+	docPath := "doc.md"
+	headResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberBlobWithResponse(
+		ctx, "local", "demo", w.ID,
+		&generated.GetReposByOwnerByNamePullsByNumberBlobParams{
+			Path: &docPath,
+			Sha:  &headSHA,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, headResp.StatusCode())
+	require.NotNil(headResp.JSON200)
+	assert.Equal(committedMD, headResp.JSON200.Content)
+	assert.False(headResp.JSON200.Truncated)
+
+	// 2. Working-tree content via WORKING-TREE sentinel.
+	wtSentinel := "WORKING-TREE"
+	wtResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberBlobWithResponse(
+		ctx, "local", "demo", w.ID,
+		&generated.GetReposByOwnerByNamePullsByNumberBlobParams{
+			Path: &docPath,
+			Sha:  &wtSentinel,
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, wtResp.StatusCode())
+	require.NotNil(wtResp.JSON200)
+	assert.Equal(workingMD, wtResp.JSON200.Content)
+	assert.False(wtResp.JSON200.Truncated)
+
+	// 3. Missing path: 404 (not 502 — distinguishes user error
+	// from server-side breakage).
+	missingPath := "does-not-exist.md"
+	missResp, err := client.HTTP.GetReposByOwnerByNamePullsByNumberBlobWithResponse(
+		ctx, "local", "demo", w.ID,
+		&generated.GetReposByOwnerByNamePullsByNumberBlobParams{
+			Path: &missingPath,
+			Sha:  &headSHA,
+		},
+	)
+	require.NoError(err)
+	assert.Equal(http.StatusNotFound, missResp.StatusCode())
+}
+
 func runGitWT(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

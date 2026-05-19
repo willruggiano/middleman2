@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -282,6 +283,37 @@ func (s *Server) getCommitsLocal(
 		resp.Commits = []commitResponse{}
 	}
 	return &getCommitsOutput{Body: resp}, nil
+}
+
+// getBlobLocal serves the PR-shaped /blob endpoint for a local
+// worktree. Reads either a committed file (via git cat-file in the
+// worktree's .git dir) or the working-tree state (via WorkingTreeSentinel
+// → direct filesystem read). The bare-clone manager is bypassed
+// entirely because local entries have no clone partition.
+func (s *Server) getBlobLocal(
+	ctx context.Context, input *getBlobInput,
+) (*getBlobOutput, error) {
+	if input.Path == "" {
+		return nil, huma.Error400BadRequest("path is required")
+	}
+	if input.SHA == "" {
+		return nil, huma.Error400BadRequest("sha is required")
+	}
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	raw, err := worktrees.Blob(ctx, w.Path, input.SHA, input.Path)
+	if err != nil {
+		if errors.Is(err, worktrees.ErrNotFound) {
+			return nil, huma.Error404NotFound("blob not found: " + err.Error())
+		}
+		return nil, huma.Error502BadGateway("read blob: " + err.Error())
+	}
+	if len(raw) > blobMaxBytes {
+		return &getBlobOutput{Body: blobResponse{Truncated: true}}, nil
+	}
+	return &getBlobOutput{Body: blobResponse{Content: string(raw)}}, nil
 }
 
 // getFilesLocal returns the lightweight file list for a worktree's
