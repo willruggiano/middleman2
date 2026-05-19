@@ -153,6 +153,7 @@
         body.hunk_start_line = range.startLine;
         body.hunk_end_line = range.endLine;
       }
+      if (selectionSnapshot) body.selection_text = selectionSnapshot;
       const result = await aiStore.createThread(body);
       if (result.ok) {
         closeAsk();
