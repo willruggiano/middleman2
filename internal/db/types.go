@@ -309,6 +309,38 @@ type WorktreeWithRepo struct {
 	RepoName  string
 }
 
+// WorktreeSession is an interactive Claude session bound to one
+// worktree. The session is the agent loop the user drives from the
+// Activity tab; review-feedback submissions and free-text follow-ups
+// land here as turns.
+type WorktreeSession struct {
+	ID              int64
+	WorktreeID      int64
+	ClaudeSessionID string // populated after the first claude --output-format=json reply
+	Status          string // "active" | "killed" | "closed"
+	StartedAt       time.Time
+	LastActivityAt  time.Time
+}
+
+// WorktreeSessionTurn is one entry in the conversation.
+//
+//   - turn_type=review_feedback  user, compiled from draft comments
+//   - turn_type=user_message     user, free-text
+//   - turn_type=claude_response  claude's reply (status reflects in-flight state)
+//   - turn_type=state            session-started, etc. system marker
+type WorktreeSessionTurn struct {
+	ID           int64
+	SessionID    int64
+	TurnType     string
+	Content      string
+	RawJSON      string
+	Status       string // for claude_response: queued|running|done|failed|cancelled
+	Error        string
+	PID          *int
+	MetadataJSON string
+	CreatedAt    time.Time
+}
+
 // ListActivityOpts holds filters and pagination for the activity feed.
 type ListActivityOpts struct {
 	Repo   string     // "owner/name" filter
