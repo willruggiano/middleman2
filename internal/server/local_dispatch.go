@@ -61,6 +61,53 @@ func (s *Server) resolveLocalWorktree(
 	return &w, nil
 }
 
+// ensureSyntheticMRForWorktree upserts a row in
+// middleman_merge_requests for the given worktree so the rest of
+// the PR-anchored machinery (AI threads, AI briefs, commit
+// analyses, PR notes) can FK to it without learning a separate
+// "this is a worktree" code path.
+//
+// The row is keyed by (repo_id, number) = (local-repo, worktree.id).
+// Most fields are minimal stubs derived from the worktree state;
+// the row is invisible to GitHub-only flows because the parent
+// repo has platform='local'.
+//
+// Idempotent: subsequent calls upsert and return the same id.
+func (s *Server) ensureSyntheticMRForWorktree(
+	ctx context.Context, w *db.Worktree,
+) (int64, error) {
+	baseRef := s.lookupBaseRefForWorktree(ctx, *w)
+	base, err := worktrees.ResolveBase(ctx, w.Path, baseRef)
+	if err != nil {
+		// Base resolution failure shouldn't block thread creation —
+		// the runner can still work without merge-base info.
+		base = worktrees.BaseRef{SHA: w.HeadSHA, Fallback: true}
+	}
+	branch := w.Branch
+	if branch == "" {
+		branch = "(detached)"
+	}
+	mr := &db.MergeRequest{
+		RepoID:          w.RepoID,
+		PlatformID:      w.ID,
+		Number:          int(w.ID),
+		Title:           "Worktree: " + branch,
+		Author:          localOwner,
+		State:           "open",
+		HeadBranch:      branch,
+		BaseBranch:      base.Ref,
+		PlatformHeadSHA: w.HeadSHA,
+		PlatformBaseSHA: base.SHA,
+		DiffHeadSHA:     w.HeadSHA,
+		DiffBaseSHA:     base.SHA,
+		MergeBaseSHA:    base.SHA,
+		CreatedAt:       w.DiscoveredAt,
+		UpdatedAt:       w.LastSeenAt,
+		LastActivityAt:  w.LastSeenAt,
+	}
+	return s.db.UpsertMergeRequest(ctx, mr)
+}
+
 // getPullLocal synthesizes a PR-shaped detail response for a local
 // worktree. The synthesized MergeRequest fills the fields the
 // review pane actually reads (RepoID, Number, Title, Author,

@@ -12,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/wesm/middleman/internal/aireview"
 	"github.com/wesm/middleman/internal/db"
+	"github.com/wesm/middleman/internal/worktrees"
 )
 
 // --- shared response shapes -------------------------------------------------
@@ -186,37 +187,67 @@ func (s *Server) createAIThread(ctx context.Context, input *createAIThreadInput)
 		return nil, err
 	}
 
-	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
-	if err != nil {
-		return nil, huma.Error404NotFound("pull request not found")
-	}
+	var (
+		mrID              int64
+		mergeBaseSHA      string
+		headSHA           string
+		localWorktreePath string
+	)
 
-	// Look up the PR's merge_base / head so the runner can pre-cache
-	// per-commit `git show` output for Claude to Read on demand. A
-	// missing/empty result just disables the cache; the thread still
-	// works.
-	var mergeBaseSHA, headSHA string
-	if shas, err := s.db.GetDiffSHAs(ctx, input.Owner, input.Name, input.Number); err == nil && shas != nil {
-		mergeBaseSHA = shas.MergeBaseSHA
-		headSHA = shas.DiffHeadSHA
+	if isLocalSource(input.Owner) {
+		// Local source: ensure a synthetic MR row exists so the AI
+		// thread (and any future PR-anchored data) can FK to it.
+		// Pass the worktree path directly so the runner uses it
+		// instead of provisioning an ephemeral worktree from a bare
+		// clone — we don't have a bare clone for local repos.
+		w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+		if err != nil {
+			return nil, huma.Error404NotFound("worktree not found")
+		}
+		id, err := s.ensureSyntheticMRForWorktree(ctx, w)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("ensure synthetic MR: " + err.Error())
+		}
+		mrID = id
+		localWorktreePath = w.Path
+		baseRef := s.lookupBaseRefForWorktree(ctx, *w)
+		if base, err := worktrees.ResolveBase(ctx, w.Path, baseRef); err == nil {
+			mergeBaseSHA = base.SHA
+			headSHA = w.HeadSHA
+		}
+	} else {
+		var err error
+		mrID, err = s.lookupMRID(ctx, repoNumberPathRef{owner: input.Owner, name: input.Name, number: input.Number})
+		if err != nil {
+			return nil, huma.Error404NotFound("pull request not found")
+		}
+		// Look up the PR's merge_base / head so the runner can pre-cache
+		// per-commit `git show` output for Claude to Read on demand. A
+		// missing/empty result just disables the cache; the thread still
+		// works.
+		if shas, err := s.db.GetDiffSHAs(ctx, input.Owner, input.Name, input.Number); err == nil && shas != nil {
+			mergeBaseSHA = shas.MergeBaseSHA
+			headSHA = shas.DiffHeadSHA
+		}
 	}
 
 	thread, question, err := s.aiReview.CreateThread(ctx, aireview.CreateThreadInput{
-		MergeRequestID: mrID,
-		Owner:          input.Owner,
-		Name:           input.Name,
-		Path:           input.Body.Path,
-		AnchorSide:     input.Body.AnchorSide,
-		AnchorLine:     input.Body.AnchorLine,
-		HunkStartLine:  input.Body.HunkStartLine,
-		HunkEndLine:    input.Body.HunkEndLine,
-		HunkText:       input.Body.HunkText,
-		SelectionText:  input.Body.SelectionText,
-		CommitSHA:      input.Body.CommitSHA,
-		Question:       input.Body.Question,
-		PromptContext:  input.Body.PromptContext,
-		PRMergeBaseSHA: mergeBaseSHA,
-		PRHeadSHA:      headSHA,
+		MergeRequestID:    mrID,
+		Owner:             input.Owner,
+		Name:              input.Name,
+		Path:              input.Body.Path,
+		AnchorSide:        input.Body.AnchorSide,
+		AnchorLine:        input.Body.AnchorLine,
+		HunkStartLine:     input.Body.HunkStartLine,
+		HunkEndLine:       input.Body.HunkEndLine,
+		HunkText:          input.Body.HunkText,
+		SelectionText:     input.Body.SelectionText,
+		CommitSHA:         input.Body.CommitSHA,
+		Question:          input.Body.Question,
+		PromptContext:     input.Body.PromptContext,
+		PRMergeBaseSHA:    mergeBaseSHA,
+		PRHeadSHA:         headSHA,
+		LocalWorktreePath: localWorktreePath,
 	})
 	if err != nil {
 		return nil, huma.Error502BadGateway("create thread: " + err.Error())

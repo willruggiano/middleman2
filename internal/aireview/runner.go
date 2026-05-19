@@ -139,10 +139,16 @@ type CreateThreadInput struct {
 	// Claude additional orientation (PR title, branch, etc.). Kept
 	// separate so the caller controls what goes in.
 	PromptContext string
+	// LocalWorktreePath, when set, names an existing on-disk
+	// worktree the runner should use directly instead of provisioning
+	// a fresh ephemeral worktree from a bare clone. Used for
+	// local-source AI threads, where there's no bare clone and the
+	// worktree IS the working directory.
+	LocalWorktreePath string
 }
 
 func (r *Runner) CreateThread(ctx context.Context, in CreateThreadInput) (db.AIThread, db.AIQuestion, error) {
-	if r.clones == nil {
+	if in.LocalWorktreePath == "" && r.clones == nil {
 		return db.AIThread{}, db.AIQuestion{}, errors.New("clone manager not configured")
 	}
 	if in.CommitSHA == "" {
@@ -164,19 +170,34 @@ func (r *Runner) CreateThread(ctx context.Context, in CreateThreadInput) (db.AIT
 		return db.AIThread{}, db.AIQuestion{}, err
 	}
 
-	worktree, err := r.provisionWorktree(ctx, in.Owner, in.Name, in.CommitSHA, thread.ID)
-	if err != nil {
-		_ = r.db.DeleteAIThread(ctx, thread.ID)
-		return db.AIThread{}, db.AIQuestion{}, fmt.Errorf("provision worktree: %w", err)
+	// For local sources, the worktree already exists on disk and is
+	// the user's working directory — we don't provision a fresh
+	// ephemeral one (and crucially, we don't remove it on teardown).
+	// For PR sources, behavior is unchanged.
+	worktree := in.LocalWorktreePath
+	if worktree == "" {
+		worktree, err = r.provisionWorktree(ctx, in.Owner, in.Name, in.CommitSHA, thread.ID)
+		if err != nil {
+			_ = r.db.DeleteAIThread(ctx, thread.ID)
+			return db.AIThread{}, db.AIQuestion{}, fmt.Errorf("provision worktree: %w", err)
+		}
 	}
 	if err := r.db.UpdateAIThreadSession(ctx, thread.ID, "", worktree); err != nil {
-		r.removeWorktree(ctx, in.Owner, in.Name, worktree)
+		if in.LocalWorktreePath == "" {
+			r.removeWorktree(ctx, in.Owner, in.Name, worktree)
+		}
 		_ = r.db.DeleteAIThread(ctx, thread.ID)
 		return db.AIThread{}, db.AIQuestion{}, err
 	}
 	thread.WorktreePath = &worktree
 
-	cachedShas := r.cachePRCommits(ctx, in.Owner, in.Name, worktree, in.PRMergeBaseSHA, in.PRHeadSHA)
+	// PR-commit caching reads through the bare clone; skip it for
+	// local sources (no bare clone). Claude still has the anchored
+	// hunk text and can Read files from the worktree directly.
+	var cachedShas []string
+	if in.LocalWorktreePath == "" {
+		cachedShas = r.cachePRCommits(ctx, in.Owner, in.Name, worktree, in.PRMergeBaseSHA, in.PRHeadSHA)
+	}
 
 	r.spawnQuestion(thread, question, buildPrompt(in, in.Question, cachedShas))
 	return thread, question, nil
@@ -238,9 +259,30 @@ func (r *Runner) CloseThread(ctx context.Context, threadID int64) error {
 	}
 
 	if thread.WorktreePath != nil && *thread.WorktreePath != "" {
-		r.removeWorktree(ctx, "", "", *thread.WorktreePath)
+		// Only tear down worktrees we ourselves provisioned. Local
+		// AI threads run against the user's own worktree (passed in
+		// via LocalWorktreePath at create time) — `git worktree
+		// remove` against that would destroy the user's working copy.
+		if r.isManagedWorktreePath(*thread.WorktreePath) {
+			r.removeWorktree(ctx, "", "", *thread.WorktreePath)
+		}
 	}
 	return r.db.CloseAIThread(ctx, threadID)
+}
+
+// isManagedWorktreePath reports whether the given worktree path is
+// one we provisioned ourselves (under rootDir). User-owned worktrees
+// from local sources live elsewhere on disk and must never be
+// removed by the runner.
+func (r *Runner) isManagedWorktreePath(p string) bool {
+	if r.rootDir == "" || p == "" {
+		return false
+	}
+	rel, err := filepath.Rel(r.rootDir, p)
+	if err != nil {
+		return false
+	}
+	return !strings.HasPrefix(rel, "..")
 }
 
 // DeleteThread closes and then removes the thread entirely from the DB.
