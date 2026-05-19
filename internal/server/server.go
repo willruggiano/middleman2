@@ -342,11 +342,10 @@ func newServer(
 		if err := s.aiReview.ReconcileOnStartup(bgCtx); err != nil {
 			slog.Warn("ai review reconcile on startup failed", "err", err)
 		}
-		// Sessions reuse the same claude binary + db; nothing to
-		// reconcile on startup yet (turns left running across
-		// restarts surface as stale "running" status, which the UI
-		// can flag — proper cleanup is a future slice).
 		s.sessionRunner = aireview.NewSessionRunner(database)
+		if err := s.sessionRunner.ReconcileOnStartup(bgCtx); err != nil {
+			slog.Warn("session runner reconcile on startup failed", "err", err)
+		}
 	}
 
 	if s.workspaces != nil {

@@ -47,6 +47,7 @@ type SessionDB interface {
 	SetWorktreeSessionClaudeID(ctx context.Context, id int64, claudeSessionID string) error
 	AddWorktreeSessionTurn(ctx context.Context, in db.NewWorktreeSessionTurn) (db.WorktreeSessionTurn, error)
 	UpdateWorktreeSessionTurnFields(ctx context.Context, id int64, u db.UpdateWorktreeSessionTurn) error
+	ListRunningWorktreeSessionTurns(ctx context.Context) ([]db.WorktreeSessionTurn, error)
 }
 
 // NewSessionRunner builds a runner backed by the given DB.
@@ -55,6 +56,28 @@ func NewSessionRunner(database SessionDB) *SessionRunner {
 		db:      database,
 		running: make(map[int64]context.CancelFunc),
 	}
+}
+
+// ReconcileOnStartup marks any leftover queued/running session
+// turns as failed. Their subprocesses didn't survive the middleman
+// restart; without this the UI would show them as in-flight
+// forever. The session row itself is left alive — the user can
+// submit a new turn against the same Claude session via --resume.
+func (r *SessionRunner) ReconcileOnStartup(ctx context.Context) error {
+	orphan, err := r.db.ListRunningWorktreeSessionTurns(ctx)
+	if err != nil {
+		return fmt.Errorf("list running session turns: %w", err)
+	}
+	failed := "failed"
+	msg := "interrupted by middleman restart"
+	for _, t := range orphan {
+		_ = r.db.UpdateWorktreeSessionTurnFields(ctx, t.ID, db.UpdateWorktreeSessionTurn{
+			Status:   &failed,
+			Error:    &msg,
+			ClearPID: true,
+		})
+	}
+	return nil
 }
 
 // SubmitTurnInput packages a user-driven turn submission.

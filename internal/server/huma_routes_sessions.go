@@ -76,10 +76,17 @@ type cancelTurnInput struct {
 	TurnID int64  `path:"turn_id"`
 }
 
+type killSessionInput struct {
+	Owner  string `path:"owner"`
+	Name   string `path:"name"`
+	Number int    `path:"number"`
+}
+
 func (s *Server) registerSessionRoutes(api huma.API) {
 	huma.Get(api, "/repos/{owner}/{name}/pulls/{number}/session", s.getWorktreeSession)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/session/turns", s.submitWorktreeSessionTurn)
 	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/session/turns/{turn_id}/cancel", s.cancelWorktreeSessionTurn)
+	huma.Post(api, "/repos/{owner}/{name}/pulls/{number}/session/kill", s.killWorktreeSession)
 }
 
 // getWorktreeSession returns the active session (if any) and all
@@ -188,6 +195,51 @@ func (s *Server) submitWorktreeSessionTurn(
 	out.Body.ResponseTurn = toSessionTurnResponse(res.ResponseTurn)
 	out.Body.Session = toSessionResponse(sess)
 	return out, nil
+}
+
+// killWorktreeSession terminates the active session: cancels any
+// in-flight turn, then marks the session row 'killed'. The next
+// turn submission against this worktree will create a fresh
+// session (new claude_session_id, fresh prompt context).
+func (s *Server) killWorktreeSession(
+	ctx context.Context, input *killSessionInput,
+) (*emptyOutput, error) {
+	if s.sessionRunner == nil {
+		return nil, huma.Error503ServiceUnavailable("sessions not available")
+	}
+	if !isLocalSource(input.Owner) {
+		return nil, huma.Error400BadRequest("sessions are local-worktree only")
+	}
+	w, err := s.resolveLocalWorktree(ctx, input.Name, input.Number)
+	if err != nil {
+		return nil, huma.Error404NotFound("worktree not found")
+	}
+	sess, err := s.db.GetActiveWorktreeSession(ctx, w.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// No active session; treat as no-op (idempotent kill).
+		return &emptyOutput{}, nil
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("get active session: " + err.Error())
+	}
+
+	// Cancel any in-flight response turns for this session before
+	// flipping the row. Avoids the session being killed while a
+	// subprocess is still writing back to it.
+	turns, err := s.db.ListWorktreeSessionTurns(ctx, sess.ID)
+	if err == nil {
+		for _, t := range turns {
+			if t.TurnType == "claude_response" &&
+				(t.Status == "running" || t.Status == "queued") {
+				_ = s.sessionRunner.CancelTurn(ctx, t.ID)
+			}
+		}
+	}
+
+	if err := s.db.MarkWorktreesSessionStatus(ctx, sess.ID, "killed"); err != nil {
+		return nil, huma.Error500InternalServerError("mark session killed: " + err.Error())
+	}
+	return &emptyOutput{}, nil
 }
 
 // cancelWorktreeSessionTurn kills the subprocess for a running

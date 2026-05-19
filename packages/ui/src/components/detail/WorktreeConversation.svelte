@@ -87,9 +87,42 @@
   async function cancelTurn(turnID: number): Promise<void> {
     await worktreeSession.cancelTurn(owner, name, number, turnID);
   }
+
+  let killing = $state(false);
+  async function killSession(): Promise<void> {
+    if (killing) return;
+    if (!confirm("Kill this session? Any in-flight turn will be cancelled. " +
+        "Submitting new review feedback will start a fresh session.")) {
+      return;
+    }
+    killing = true;
+    try {
+      await worktreeSession.killSession(owner, name, number);
+    } finally {
+      killing = false;
+    }
+  }
 </script>
 
 <div class="conv">
+  {#if session}
+    <div class="conv__header">
+      <span class="conv__header-title">Interactive session</span>
+      <span class="conv__header-sub">
+        active{hasRunning ? " · Claude is working" : ""}
+      </span>
+      <button
+        type="button"
+        class="conv__kill-btn"
+        onclick={() => void killSession()}
+        disabled={killing}
+        title="Stop this Claude session. A new session starts on the next submission."
+      >
+        {killing ? "Killing…" : "Kill session"}
+      </button>
+    </div>
+  {/if}
+
   {#if errorMsg}
     <div class="conv__error">{errorMsg}</div>
   {/if}
@@ -181,6 +214,49 @@
     flex: 1;
     min-height: 0;
     background: var(--bg-canvas);
+  }
+
+  .conv__header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border-muted);
+    background: var(--bg-surface);
+    flex-shrink: 0;
+  }
+
+  .conv__header-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .conv__header-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .conv__kill-btn {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 3px 10px;
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .conv__kill-btn:hover:not(:disabled) {
+    color: var(--accent-red);
+    border-color: color-mix(in srgb, var(--accent-red) 50%, var(--border-muted));
+  }
+
+  .conv__kill-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .conv__error {

@@ -224,6 +224,36 @@ func (d *DB) GetWorktreeSessionTurn(
 	return scanWorktreeSessionTurn(row)
 }
 
+// ListRunningWorktreeSessionTurns returns every claude_response
+// turn currently marked queued or running across all sessions.
+// Used by the startup reconciler to mark orphaned subprocesses
+// as failed — they didn't survive the middleman restart.
+func (d *DB) ListRunningWorktreeSessionTurns(
+	ctx context.Context,
+) ([]WorktreeSessionTurn, error) {
+	rows, err := d.ro.QueryContext(ctx,
+		`SELECT id, session_id, turn_type, content, raw_json,
+		        status, error, pid, metadata_json, created_at
+		   FROM middleman_worktree_session_turns
+		  WHERE turn_type = 'claude_response'
+		    AND status IN ('queued', 'running')
+		  ORDER BY id ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list running session turns: %w", err)
+	}
+	defer rows.Close()
+	var out []WorktreeSessionTurn
+	for rows.Next() {
+		t, err := scanWorktreeSessionTurn(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // ListWorktreeSessionTurns returns all turns for a session in
 // chronological order.
 func (d *DB) ListWorktreeSessionTurns(

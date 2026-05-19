@@ -218,6 +218,58 @@ func TestSessionRunnerCancelTurn(t *testing.T) {
 	assert.Nil(turn.PID)
 }
 
+func TestSessionRunnerReconcileOnStartup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	database := openTestDB(t)
+	ctx := context.Background()
+
+	repoID, err := database.UpsertLocalRepo(ctx, "demo")
+	require.NoError(err)
+	w, err := database.UpsertWorktree(ctx, repoID, db.ScannedWorktree{
+		Path: "/code/demo", Branch: "feat/x",
+	})
+	require.NoError(err)
+	sess, err := database.CreateWorktreeSession(ctx, w.ID)
+	require.NoError(err)
+
+	// Seed one queued + one running + one done. Reconciler should
+	// fail the first two and leave the third alone.
+	queued, err := database.AddWorktreeSessionTurn(ctx, db.NewWorktreeSessionTurn{
+		SessionID: sess.ID, TurnType: "claude_response", Status: "queued",
+	})
+	require.NoError(err)
+
+	running, err := database.AddWorktreeSessionTurn(ctx, db.NewWorktreeSessionTurn{
+		SessionID: sess.ID, TurnType: "claude_response", Status: "running",
+	})
+	require.NoError(err)
+
+	done, err := database.AddWorktreeSessionTurn(ctx, db.NewWorktreeSessionTurn{
+		SessionID: sess.ID, TurnType: "claude_response", Status: "done",
+		Content: "all good",
+	})
+	require.NoError(err)
+
+	runner := NewSessionRunner(database)
+	require.NoError(runner.ReconcileOnStartup(ctx))
+
+	q, err := database.GetWorktreeSessionTurn(ctx, queued.ID)
+	require.NoError(err)
+	assert.Equal("failed", q.Status)
+	assert.Contains(q.Error, "interrupted")
+
+	r, err := database.GetWorktreeSessionTurn(ctx, running.ID)
+	require.NoError(err)
+	assert.Equal("failed", r.Status)
+
+	d, err := database.GetWorktreeSessionTurn(ctx, done.ID)
+	require.NoError(err)
+	assert.Equal("done", d.Status)
+	assert.Equal("all good", d.Content)
+}
+
 // Suppress unused import vet failures when the test file is the only
 // consumer of the symbol below.
 var _ = fmt.Sprintf

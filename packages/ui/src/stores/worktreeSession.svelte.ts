@@ -186,6 +186,36 @@ export function createWorktreeSessionStore(opts: WorktreeSessionStoreOptions) {
     }
   }
 
+  async function killSession(
+    owner: string,
+    name: string,
+    number: number,
+  ): Promise<void> {
+    try {
+      const { error } = await client.POST(
+        "/repos/{owner}/{name}/pulls/{number}/session/kill",
+        {
+          params: { path: { owner, name, number } },
+        },
+      );
+      if (error) {
+        throw new Error(
+          (error as { detail?: string }).detail ?? "failed to kill session",
+        );
+      }
+      // The session is gone; clear local state so the empty
+      // placeholder renders. A subsequent submitTurn will create
+      // a fresh session.
+      stopPolling();
+      entry = { session: null, turns: [], loading: false, error: null };
+    } catch (err) {
+      entry = {
+        ...entry,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
   async function cancelTurn(
     owner: string,
     name: string,
@@ -229,6 +259,7 @@ export function createWorktreeSessionStore(opts: WorktreeSessionStoreOptions) {
     loadSession,
     submitTurn,
     cancelTurn,
+    killSession,
     clear,
   };
 }

@@ -1509,6 +1509,9 @@ type ClientInterface interface {
 	// GetReposByOwnerByNamePullsByNumberSession request
 	GetReposByOwnerByNamePullsByNumberSession(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// PostReposByOwnerByNamePullsByNumberSessionKill request
+	PostReposByOwnerByNamePullsByNumberSessionKill(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// PostReposByOwnerByNamePullsByNumberSessionTurnsWithBody request with any body
 	PostReposByOwnerByNamePullsByNumberSessionTurnsWithBody(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2322,6 +2325,18 @@ func (c *Client) PostReposByOwnerByNamePullsByNumberReview(ctx context.Context, 
 
 func (c *Client) GetReposByOwnerByNamePullsByNumberSession(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReposByOwnerByNamePullsByNumberSessionRequest(c.Server, owner, name, number)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostReposByOwnerByNamePullsByNumberSessionKill(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostReposByOwnerByNamePullsByNumberSessionKillRequest(c.Server, owner, name, number)
 	if err != nil {
 		return nil, err
 	}
@@ -5571,6 +5586,54 @@ func NewGetReposByOwnerByNamePullsByNumberSessionRequest(server string, owner st
 	return req, nil
 }
 
+// NewPostReposByOwnerByNamePullsByNumberSessionKillRequest generates requests for PostReposByOwnerByNamePullsByNumberSessionKill
+func NewPostReposByOwnerByNamePullsByNumberSessionKillRequest(server string, owner string, name string, number int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/session/kill", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewPostReposByOwnerByNamePullsByNumberSessionTurnsRequest calls the generic PostReposByOwnerByNamePullsByNumberSessionTurns builder with application/json body
 func NewPostReposByOwnerByNamePullsByNumberSessionTurnsRequest(server string, owner string, name string, number int64, body PostReposByOwnerByNamePullsByNumberSessionTurnsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -6550,6 +6613,9 @@ type ClientWithResponsesInterface interface {
 
 	// GetReposByOwnerByNamePullsByNumberSessionWithResponse request
 	GetReposByOwnerByNamePullsByNumberSessionWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*GetReposByOwnerByNamePullsByNumberSessionResponse, error)
+
+	// PostReposByOwnerByNamePullsByNumberSessionKillWithResponse request
+	PostReposByOwnerByNamePullsByNumberSessionKillWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberSessionKillResponse, error)
 
 	// PostReposByOwnerByNamePullsByNumberSessionTurnsWithBodyWithResponse request with any body
 	PostReposByOwnerByNamePullsByNumberSessionTurnsWithBodyWithResponse(ctx context.Context, owner string, name string, number int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberSessionTurnsResponse, error)
@@ -7740,6 +7806,28 @@ func (r GetReposByOwnerByNamePullsByNumberSessionResponse) StatusCode() int {
 	return 0
 }
 
+type PostReposByOwnerByNamePullsByNumberSessionKillResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PostReposByOwnerByNamePullsByNumberSessionKillResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostReposByOwnerByNamePullsByNumberSessionKillResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type PostReposByOwnerByNamePullsByNumberSessionTurnsResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
@@ -8699,6 +8787,15 @@ func (c *ClientWithResponses) GetReposByOwnerByNamePullsByNumberSessionWithRespo
 		return nil, err
 	}
 	return ParseGetReposByOwnerByNamePullsByNumberSessionResponse(rsp)
+}
+
+// PostReposByOwnerByNamePullsByNumberSessionKillWithResponse request returning *PostReposByOwnerByNamePullsByNumberSessionKillResponse
+func (c *ClientWithResponses) PostReposByOwnerByNamePullsByNumberSessionKillWithResponse(ctx context.Context, owner string, name string, number int64, reqEditors ...RequestEditorFn) (*PostReposByOwnerByNamePullsByNumberSessionKillResponse, error) {
+	rsp, err := c.PostReposByOwnerByNamePullsByNumberSessionKill(ctx, owner, name, number, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostReposByOwnerByNamePullsByNumberSessionKillResponse(rsp)
 }
 
 // PostReposByOwnerByNamePullsByNumberSessionTurnsWithBodyWithResponse request with arbitrary body returning *PostReposByOwnerByNamePullsByNumberSessionTurnsResponse
@@ -10481,6 +10578,32 @@ func ParseGetReposByOwnerByNamePullsByNumberSessionResponse(rsp *http.Response) 
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostReposByOwnerByNamePullsByNumberSessionKillResponse parses an HTTP response from a PostReposByOwnerByNamePullsByNumberSessionKillWithResponse call
+func ParsePostReposByOwnerByNamePullsByNumberSessionKillResponse(rsp *http.Response) (*PostReposByOwnerByNamePullsByNumberSessionKillResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostReposByOwnerByNamePullsByNumberSessionKillResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest ErrorModel
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
