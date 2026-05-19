@@ -145,7 +145,11 @@
         </div>
       {/key}
     {:else if isLocalPR}
-      <WorktreeConversation />
+      <WorktreeConversation
+        owner={selectedPR.owner}
+        name={selectedPR.name}
+        number={selectedPR.number}
+      />
     {:else}
       <PullDetail
         owner={selectedPR.owner}

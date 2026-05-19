@@ -12,8 +12,12 @@
 
   const { owner, name, number, onclose }: Props = $props();
 
-  const { diff: diffStore, pulls: pullsStore } = getStores();
+  const { diff: diffStore, pulls: pullsStore, worktreeSession } = getStores();
   const client = getClient();
+
+  // For local worktrees the submit verb sends review feedback to
+  // the interactive Claude session instead of POSTing to GitHub.
+  const isLocal = $derived(owner === "local");
 
   // Draft the user is about to publish. Read once on open to snapshot;
   // we still read live for comment deletion/adds but the body/event
@@ -59,10 +63,60 @@
   // everything getting anchored to HEAD at publish time. The
   // review-level commit_id is still sent as a fallback used when a
   // comment has no commit_sha of its own.
+  // Compose review feedback as a markdown turn the Claude session
+  // can read. Each draft comment becomes a quoted block tagged with
+  // file:line so Claude has the same anchors the reviewer was
+  // looking at.
+  function compileReviewFeedback(
+    body: string,
+    comments: typeof draft.comments,
+  ): string {
+    const parts: string[] = [];
+    if (body.trim()) parts.push(body.trim());
+    if (comments.length > 0) {
+      parts.push("Inline review comments:");
+      for (const c of comments) {
+        const range = c.startLine != null && c.startLine !== c.line
+          ? `${c.startLine}–${c.line}`
+          : `${c.line}`;
+        parts.push(
+          `- **${c.path}**:${range} (${c.side === "LEFT" ? "before" : "after"})\n` +
+          `  ${c.body.split("\n").join("\n  ")}`,
+        );
+      }
+    }
+    return parts.join("\n\n");
+  }
+
   async function onSubmit(): Promise<void> {
     if (submitting) return;
     submitting = true;
     errorMsg = null;
+
+    // Local worktrees route through the session runner instead of
+    // GitHub's review-submit endpoint. The Claude session is the
+    // "downstream" of the review submission — it's what acts on the
+    // feedback.
+    if (isLocal) {
+      try {
+        const content = compileReviewFeedback(draft.body, draft.comments);
+        if (!content.trim()) {
+          errorMsg = "Add at least one inline comment or a summary";
+          return;
+        }
+        await worktreeSession.submitTurn(owner, name, number, {
+          type: "review_feedback",
+          content,
+        });
+        diffStore.clearDraft();
+        onclose();
+      } catch (err) {
+        errorMsg = err instanceof Error ? err.message : String(err);
+      } finally {
+        submitting = false;
+      }
+      return;
+    }
 
     const commits = diffStore.getCommits();
     const headSha = commits && commits.length > 0 ? commits[0]!.sha : "";
@@ -240,7 +294,11 @@
           draft.comments.length === 0)}
       onclick={() => void onSubmit()}
     >
-      {submitting ? "Publishing..." : "Publish review"}
+      {#if isLocal}
+        {submitting ? "Sending…" : "Send to Claude"}
+      {:else}
+        {submitting ? "Publishing…" : "Publish review"}
+      {/if}
     </button>
     <button type="button" class="panel__btn" disabled={submitting} onclick={onclose}>
       Cancel

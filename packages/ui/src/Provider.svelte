@@ -87,6 +87,7 @@
   import { createViewerStore } from "./stores/viewer.svelte.js";
   import { createAISessionsStore } from "./stores/aiSessions.svelte.js";
   import { createWorktreesStore } from "./stores/worktrees.svelte.js";
+  import { createWorktreeSessionStore } from "./stores/worktreeSession.svelte.js";
 
   interface Props {
     client: MiddlemanClient;
@@ -271,6 +272,7 @@
       fileResolver: fileResolverStore,
       commitAnalysis: commitAnalysisStore,
       worktrees: worktreesStore,
+      worktreeSession: createWorktreeSessionStore({ client: cl }),
     };
 
     if (roborevBase) {
