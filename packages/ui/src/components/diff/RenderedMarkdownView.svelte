@@ -204,8 +204,10 @@
   function sanitize(html: string): string {
     // DOMPurify allows any class attribute by default; the heading
     // injector emits <span class="rmd-line">, which sails through.
+    // data-anchor-* are required for computeRangeFromSelection to work
+    // after the HTML is mounted.
     return DOMPurify.sanitize(html, {
-      ADD_ATTR: ["target", "rel", "title"],
+      ADD_ATTR: ["target", "rel", "title", "data-anchor-line", "data-anchor-side"],
     });
   }
 
