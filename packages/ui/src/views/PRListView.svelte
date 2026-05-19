@@ -9,6 +9,7 @@
   import DiffView from "../components/diff/DiffView.svelte";
   import DiffSidebar from "../components/diff/DiffSidebar.svelte";
   import ReviewCoverBanner from "../components/detail/ReviewCoverBanner.svelte";
+  import { isLocalSource } from "../utils/sources.js";
   import ReviewBriefCard from "../components/detail/ReviewBriefCard.svelte";
   import PRNotesPanel from "../components/detail/PRNotesPanel.svelte";
   import PatchsetPicker from "../components/diff/PatchsetPicker.svelte";
@@ -86,6 +87,7 @@
   {/snippet}
 
   {#if selectedPR !== null}
+    {@const isLocalPR = isLocalSource(selectedPR.owner)}
     <div class="detail-tabs">
       <button
         class="detail-tab"
@@ -96,15 +98,17 @@
       >
         Review
       </button>
-      <button
-        class="detail-tab"
-        class:detail-tab--active={detailTab === "conversation"}
-        onclick={() => navigate(
-          `/pulls/${selectedPR.owner}/${selectedPR.name}/${selectedPR.number}`,
-        )}
-      >
-        Activity
-      </button>
+      {#if !isLocalPR}
+        <button
+          class="detail-tab"
+          class:detail-tab--active={detailTab === "conversation"}
+          onclick={() => navigate(
+            `/pulls/${selectedPR.owner}/${selectedPR.name}/${selectedPR.number}`,
+          )}
+        >
+          Activity
+        </button>
+      {/if}
     </div>
     {#if detailTab === "files"}
       {#key `${selectedPR.owner}/${selectedPR.name}/${selectedPR.number}`}
@@ -113,7 +117,7 @@
             <DiffSidebar />
           </aside>
           <div class="review-main">
-            {#if selectedPRDetail}
+            {#if selectedPRDetail && !isLocalPR}
               <ReviewCoverBanner
                 pr={selectedPRDetail.merge_request}
                 owner={selectedPR.owner}
@@ -125,13 +129,15 @@
               name={selectedPR.name}
               number={selectedPR.number}
             />
-            <PatchsetPicker />
-            <ReviewBriefCard
-              owner={selectedPR.owner}
-              name={selectedPR.name}
-              number={selectedPR.number}
-            />
-            <PRNotesPanel />
+            {#if !isLocalPR}
+              <PatchsetPicker />
+              <ReviewBriefCard
+                owner={selectedPR.owner}
+                name={selectedPR.name}
+                number={selectedPR.number}
+              />
+              <PRNotesPanel />
+            {/if}
             <DiffView
               owner={selectedPR.owner}
               name={selectedPR.name}
