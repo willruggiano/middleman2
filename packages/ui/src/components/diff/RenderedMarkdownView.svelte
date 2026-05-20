@@ -4,7 +4,6 @@
   import {
     wrapProseBlock,
     wrapCodeBlock,
-    computeRangeFromSelection,
     type AnchorSide,
     type AnchorRange,
   } from "./renderedMarkdownAnchors";
@@ -61,42 +60,15 @@
 
   let bodyEl: HTMLDivElement | undefined = $state();
 
-  let liveSelection = $state<AnchorRange | null>(null);
+  // The rendered view always represents the new (right) side of the diff.
+  const renderedSide: AnchorSide = "RIGHT";
+
   let rangeSnapshot = $state<AnchorRange | null>(null);
-  let toolbarTop = $state(0);
-  let toolbarLeft = $state(0);
   let openComposerKey = $state<string | null>(null);
 
-  function refreshSelection(): void {
-    if (!bodyEl) return;
-    const sel = typeof window !== "undefined" ? window.getSelection() : null;
-    liveSelection = computeRangeFromSelection(bodyEl, sel);
-  }
-
-  $effect(() => {
-    if (typeof document === "undefined") return;
-    document.addEventListener("selectionchange", refreshSelection);
-    return () => document.removeEventListener("selectionchange", refreshSelection);
-  });
-
-  function updateToolbarPosition(): void {
-    if (typeof window === "undefined" || !liveSelection) return;
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) return;
-    const rect = sel.getRangeAt(0).getBoundingClientRect();
-    if (rect.width === 0 && rect.height === 0) return;
-    toolbarTop = rect.bottom + window.scrollY + 4;
-    toolbarLeft = rect.right + window.scrollX - 90;
-  }
-
-  $effect(() => {
-    if (liveSelection) updateToolbarPosition();
-  });
-
-  function openComposerFromToolbar(): void {
-    if (!liveSelection) return;
-    rangeSnapshot = liveSelection;
-    openComposerKey = `${liveSelection.endLine}:${liveSelection.side}`;
+  function openComposerForBlock(start: number, end: number): void {
+    rangeSnapshot = { startLine: start, endLine: end, side: renderedSide };
+    openComposerKey = `${end}:${renderedSide}`;
   }
 
   function closeComposer(): void {
@@ -121,21 +93,16 @@
   let openAskKey = $state<string | null>(null);
   let askError = $state<string | null>(null);
   let askSubmitting = $state(false);
-  let selectionSnapshot = $state<string | null>(null);
 
-  function openAskFromToolbar(): void {
-    if (!liveSelection) return;
-    rangeSnapshot = liveSelection;
-    const sel = typeof window !== "undefined" ? window.getSelection() : null;
-    selectionSnapshot = sel?.toString().trim() || null;
-    openAskKey = `${liveSelection.endLine}:${liveSelection.side}`;
+  function openAskForBlock(start: number, end: number): void {
+    rangeSnapshot = { startLine: start, endLine: end, side: renderedSide };
+    openAskKey = `${end}:${renderedSide}`;
     askError = null;
   }
 
   function closeAsk(): void {
     openAskKey = null;
     rangeSnapshot = null;
-    selectionSnapshot = null;
     askError = null;
     askSubmitting = false;
   }
@@ -157,7 +124,6 @@
         body.hunk_start_line = range.startLine;
         body.hunk_end_line = range.endLine;
       }
-      if (selectionSnapshot) body.selection_text = selectionSnapshot;
       const result = await aiStore.createThread(body);
       if (result.ok) {
         closeAsk();
@@ -168,9 +134,6 @@
       askSubmitting = false;
     }
   }
-
-  // The rendered view always represents the new (right) side of the diff.
-  const renderedSide: AnchorSide = "RIGHT";
 
   const drafts = $derived(diffStore.getDraftCommentsForPath(path));
   const publishedForFile = $derived(
@@ -395,6 +358,7 @@
     for (const inst of mountedInstances) unmount(inst);
     mountedInstances.clear();
     bodyEl.querySelectorAll(".rmd-thread-wrap").forEach((el) => el.remove());
+    bodyEl.querySelectorAll(".rmd-line-actions").forEach((el) => el.remove());
 
     const children = Array.from(bodyEl.children) as HTMLElement[];
     for (let i = 0; i < children.length; i++) {
@@ -407,7 +371,40 @@
 
       const range = doc.blockRangeByIdx.get(i);
       if (!range) continue;
-      const cards = cardsForRange(range[0], range[1]);
+
+      // Per-block hover affordance — matches the diff view's
+      // .line-actions pattern (blue +, brown ?, opacity 0 until
+      // hover). Each block hosts its own absolutely-positioned
+      // button group on its right edge.
+      el.classList.add("rmd-block");
+      const actions = document.createElement("div");
+      actions.className = "rmd-line-actions";
+      const blockStart = range[0];
+      const blockEnd = range[1];
+      const commentBtn = document.createElement("button");
+      commentBtn.type = "button";
+      commentBtn.className = "rmd-add-comment-btn";
+      commentBtn.title = blockStart === blockEnd
+        ? `Comment on line ${blockStart}`
+        : `Comment on lines ${blockStart}–${blockEnd}`;
+      commentBtn.innerHTML =
+        '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" ' +
+        'stroke="currentColor" stroke-width="2">' +
+        '<path d="M5 2V8M2 5H8" stroke-linecap="round" /></svg>';
+      commentBtn.addEventListener("click", () => openComposerForBlock(blockStart, blockEnd));
+      const askBtn = document.createElement("button");
+      askBtn.type = "button";
+      askBtn.className = "rmd-ask-ai-btn";
+      askBtn.title = blockStart === blockEnd
+        ? `Ask Claude about line ${blockStart}`
+        : `Ask Claude about lines ${blockStart}–${blockEnd}`;
+      askBtn.textContent = "?";
+      askBtn.addEventListener("click", () => openAskForBlock(blockStart, blockEnd));
+      actions.appendChild(commentBtn);
+      actions.appendChild(askBtn);
+      el.appendChild(actions);
+
+      const cards = cardsForRange(blockStart, blockEnd);
       if (cards.length === 0) continue;
 
       const wrap = document.createElement("div");
@@ -490,7 +487,6 @@
     <div class="rmd-composer-wrap">
       <AIAskComposer
         anchor={{ line: rangeSnapshot.endLine, side: rangeSnapshot.side, startLine: rangeSnapshot.startLine }}
-        {...(selectionSnapshot ? { selectionPreview: selectionSnapshot } : {})}
         error={askError}
         submitting={askSubmitting}
         onsubmit={(q) => void submitAsk(q)}
@@ -499,23 +495,6 @@
     </div>
   {/if}
 </div>
-
-{#if liveSelection}
-  <div
-    class="rmd-toolbar"
-    style:top="{toolbarTop}px"
-    style:left="{toolbarLeft}px"
-    onmousedown={(e) => e.preventDefault()}
-    role="toolbar"
-    tabindex="-1"
-    aria-label="Rendered markdown selection actions"
-  >
-    <button type="button" class="rmd-tb-btn" onclick={openComposerFromToolbar}
-      title="Comment on lines {liveSelection.startLine}–{liveSelection.endLine}">+</button>
-    <button type="button" class="rmd-tb-btn" onclick={openAskFromToolbar}
-      title="Ask Claude about lines {liveSelection.startLine}–{liveSelection.endLine}">?</button>
-  </div>
-{/if}
 
 <style>
   .rmd-view {
@@ -718,25 +697,54 @@
     cursor: help;
   }
 
-  .rmd-toolbar {
+  /* Per-block hover affordance, mirroring DiffFile.svelte's
+     .line-actions / .add-comment-btn / .ask-ai-btn pattern so the
+     rendered view's comment + Ask buttons look and behave the same
+     as the diff view's per-line buttons. */
+  .rmd-body :global(.rmd-block) {
+    position: relative;
+  }
+  .rmd-body :global(.rmd-line-actions) {
     position: absolute;
-    display: flex;
+    top: 4px;
+    right: -52px;
+    display: inline-flex;
     gap: 4px;
-    padding: 4px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-muted);
-    border-radius: var(--radius-md);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    z-index: 5;
+    opacity: 0;
+    transition: opacity 0.1s;
+    z-index: 1;
   }
-  .rmd-tb-btn {
-    width: 24px;
-    height: 24px;
-    background: transparent;
-    border: 0;
+  .rmd-body :global(.rmd-block:hover .rmd-line-actions),
+  .rmd-body :global(.rmd-line-actions:focus-within) {
+    opacity: 1;
+  }
+  .rmd-body :global(.rmd-add-comment-btn),
+  .rmd-body :global(.rmd-ask-ai-btn) {
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 3px;
+    color: #fff;
     cursor: pointer;
-    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0;
   }
+  .rmd-body :global(.rmd-add-comment-btn) {
+    background: var(--accent-blue);
+  }
+  .rmd-body :global(.rmd-ask-ai-btn) {
+    background: var(--accent-claude);
+  }
+  .rmd-body :global(.rmd-add-comment-btn:hover),
+  .rmd-body :global(.rmd-ask-ai-btn:hover) {
+    filter: brightness(1.1);
+  }
+
   .rmd-composer-wrap {
     position: relative;
     margin-top: 12px;
