@@ -103,6 +103,61 @@
       killing = false;
     }
   }
+
+  // Smart-scroll: stay pinned to the bottom while Claude responds or
+  // tool calls stream in, but only if the reviewer is already there.
+  // If they've scrolled up to read earlier turns, leave them alone
+  // and surface a "jump to bottom" button.
+  let scrollEl: HTMLDivElement | undefined = $state();
+  let stickToBottom = $state(true);
+  // Small fudge for subpixel rounding — browsers occasionally leave
+  // scrollTop a fraction of a pixel shy of (scrollHeight - clientHeight).
+  const BOTTOM_TOLERANCE = 8;
+
+  function isAtBottom(el: HTMLElement): boolean {
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_TOLERANCE;
+  }
+
+  function scrollToBottom(behavior: ScrollBehavior = "auto"): void {
+    if (!scrollEl) return;
+    scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior });
+    stickToBottom = true;
+  }
+
+  function onScroll(): void {
+    if (!scrollEl) return;
+    stickToBottom = isAtBottom(scrollEl);
+  }
+
+  // Follow the bottom of the conversation while content grows, but
+  // only if the reviewer is already there. Two trigger sources:
+  //   1. ResizeObserver on the scroll container and its children
+  //      catches in-turn growth (tool-call streaming, markdown layout).
+  //   2. Re-running this effect on turns.length change rebuilds the
+  //      observer so new turn elements get observed too, and a
+  //      microtask scroll handles the case where appending a turn
+  //      doesn't itself trigger ResizeObserver (scrollEl's borderBox
+  //      stayed the same; only scrollHeight grew).
+  $effect(() => {
+    if (!scrollEl) return;
+    const _ = turns.length;
+
+    const followIfSticky = (): void => {
+      if (stickToBottom && scrollEl) {
+        scrollEl.scrollTo({ top: scrollEl.scrollHeight });
+      }
+    };
+
+    queueMicrotask(followIfSticky);
+
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(followIfSticky);
+    ro.observe(scrollEl);
+    for (const child of Array.from(scrollEl.children)) {
+      ro.observe(child as Element);
+    }
+    return () => ro.disconnect();
+  });
 </script>
 
 <div class="conv">
@@ -128,7 +183,7 @@
     <div class="conv__error">{errorMsg}</div>
   {/if}
 
-  <div class="conv__scroll">
+  <div class="conv__scroll" bind:this={scrollEl} onscroll={onScroll}>
     {#if turns.length === 0}
       <div class="conv__empty">
         <h2 class="conv__empty-title">No session yet</h2>
@@ -180,6 +235,21 @@
     {/if}
   </div>
 
+  {#if !stickToBottom && turns.length > 0}
+    <button
+      type="button"
+      class="conv__jump-btn"
+      onclick={() => scrollToBottom("smooth")}
+      title="Jump to latest"
+      aria-label="Jump to latest message"
+    >
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M7 2v10M3 8l4 4 4-4" />
+      </svg>
+    </button>
+  {/if}
+
   <form
     class="conv__composer"
     onsubmit={(e) => { e.preventDefault(); void sendUserMessage(); }}
@@ -218,6 +288,38 @@
     flex: 1;
     min-height: 0;
     background: var(--bg-canvas);
+    position: relative;
+  }
+
+  /* Jump-to-latest floats above the bottom-right of the scroll area,
+     just above the composer. Only rendered when the reviewer is
+     scrolled away from the bottom, so it never obscures the latest
+     message they're actively watching. */
+  .conv__jump-btn {
+    position: absolute;
+    right: 16px;
+    bottom: calc(var(--composer-height, 110px) + 12px);
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--border-default);
+    border-radius: 999px;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    cursor: pointer;
+    z-index: 4;
+  }
+  .conv__jump-btn:hover {
+    background: var(--bg-surface-hover, var(--bg-surface));
+    filter: brightness(1.05);
+  }
+  .conv__jump-btn:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
   }
 
   .conv__header {
