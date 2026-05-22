@@ -65,3 +65,67 @@ func TestHiddenReviewThreadsCascadeDelete(t *testing.T) {
 	require.NoError(err)
 	require.Empty(rows, "rows should cascade with the MR")
 }
+
+func TestActiveHiddenReviewThreadRoots(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+	mrID := seedAIQuestionTestMR(t, d)
+
+	t0 := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
+	beforeHide := t0.Add(-time.Hour)
+	afterHide := t0.Add(time.Hour)
+
+	id100 := int64(100)
+	id101 := int64(101)
+	id200 := int64(200)
+	id201 := int64(201)
+	id300 := int64(300)
+
+	require.NoError(d.UpsertMREvents(ctx, []MREvent{
+		{
+			MergeRequestID: mrID, PlatformID: &id100, EventType: "review_comment",
+			Author: "u", Body: "root A", CreatedAt: beforeHide.Add(-2 * time.Hour),
+			MetadataJSON: `{"path":"a.go","line":1,"side":"RIGHT"}`,
+			DedupeKey:    "review-comment-100",
+		},
+		{
+			MergeRequestID: mrID, PlatformID: &id101, EventType: "review_comment",
+			Author: "u", Body: "reply on A (before hide)", CreatedAt: beforeHide,
+			MetadataJSON: `{"path":"a.go","line":1,"side":"RIGHT","in_reply_to":100}`,
+			DedupeKey:    "review-comment-101",
+		},
+		{
+			MergeRequestID: mrID, PlatformID: &id200, EventType: "review_comment",
+			Author: "u", Body: "root B", CreatedAt: beforeHide.Add(-2 * time.Hour),
+			MetadataJSON: `{"path":"b.go","line":2,"side":"RIGHT"}`,
+			DedupeKey:    "review-comment-200",
+		},
+		{
+			MergeRequestID: mrID, PlatformID: &id201, EventType: "review_comment",
+			Author: "u", Body: "reply on B (after hide)", CreatedAt: afterHide,
+			MetadataJSON: `{"path":"b.go","line":2,"side":"RIGHT","in_reply_to":200}`,
+			DedupeKey:    "review-comment-201",
+		},
+		{
+			MergeRequestID: mrID, PlatformID: &id300, EventType: "review_comment",
+			Author: "u", Body: "lone root C", CreatedAt: beforeHide.Add(-3 * time.Hour),
+			MetadataJSON: `{"path":"c.go","line":3,"side":"RIGHT"}`,
+			DedupeKey:    "review-comment-300",
+		},
+	}))
+
+	// Hide all three roots at t0.
+	require.NoError(d.UpsertHiddenReviewThread(ctx, mrID, 100, t0))
+	require.NoError(d.UpsertHiddenReviewThread(ctx, mrID, 200, t0))
+	require.NoError(d.UpsertHiddenReviewThread(ctx, mrID, 300, t0))
+
+	events, err := d.ListMREvents(ctx, mrID)
+	require.NoError(err)
+
+	active, err := d.ActiveHiddenReviewThreadRoots(ctx, mrID, events)
+	require.NoError(err)
+	assert.ElementsMatch([]int64{100, 300}, active,
+		"thread 200 has a reply after hidden_at — should not be active")
+}

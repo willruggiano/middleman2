@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -78,4 +79,76 @@ func (d *DB) ListHiddenReviewThreads(
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+// ActiveHiddenReviewThreadRoots returns the subset of stored
+// hidden_review_threads rows for mrID whose hide is still in effect:
+// no review_comment in the thread has created_at > hidden_at.
+//
+// The caller passes the pre-loaded events slice so this method doesn't
+// re-query mr_events. The walk to root mirrors ResolveReviewCommentRootID
+// but stays in memory.
+func (d *DB) ActiveHiddenReviewThreadRoots(
+	ctx context.Context, mrID int64, events []MREvent,
+) ([]int64, error) {
+	hides, err := d.ListHiddenReviewThreads(ctx, mrID)
+	if err != nil {
+		return nil, err
+	}
+	if len(hides) == 0 {
+		return nil, nil
+	}
+
+	// Build platform_id → in_reply_to map and platform_id → created_at.
+	parentByID := make(map[int64]int64, len(events))
+	createdByID := make(map[int64]time.Time, len(events))
+	for _, e := range events {
+		if e.EventType != "review_comment" || e.PlatformID == nil {
+			continue
+		}
+		pid := *e.PlatformID
+		createdByID[pid] = e.CreatedAt
+		var meta struct {
+			InReplyTo int64 `json:"in_reply_to"`
+		}
+		if e.MetadataJSON != "" {
+			// Ignore unmarshal errors — treat as root.
+			_ = json.Unmarshal([]byte(e.MetadataJSON), &meta)
+		}
+		if meta.InReplyTo != 0 && meta.InReplyTo != pid {
+			parentByID[pid] = meta.InReplyTo
+		}
+	}
+
+	// Resolve every review_comment to its root (bounded chain walk).
+	rootOf := func(pid int64) int64 {
+		current := pid
+		for i := 0; i < 32; i++ {
+			parent, ok := parentByID[current]
+			if !ok {
+				return current
+			}
+			current = parent
+		}
+		return current
+	}
+
+	// Compute max(created_at) per root.
+	maxCreatedByRoot := make(map[int64]time.Time, len(events))
+	for pid, t := range createdByID {
+		root := rootOf(pid)
+		if cur, ok := maxCreatedByRoot[root]; !ok || t.After(cur) {
+			maxCreatedByRoot[root] = t
+		}
+	}
+
+	out := make([]int64, 0, len(hides))
+	for _, h := range hides {
+		latest, ok := maxCreatedByRoot[h.RootPlatformCommentID]
+		if ok && latest.After(h.HiddenAt) {
+			continue // superseded by a newer reply
+		}
+		out = append(out, h.RootPlatformCommentID)
+	}
+	return out, nil
 }
