@@ -123,7 +123,7 @@ func (d *DB) ActiveHiddenReviewThreadRoots(
 	// Resolve every review_comment to its root (bounded chain walk).
 	rootOf := func(pid int64) int64 {
 		current := pid
-		for i := 0; i < 32; i++ {
+		for range 32 {
 			parent, ok := parentByID[current]
 			if !ok {
 				return current
