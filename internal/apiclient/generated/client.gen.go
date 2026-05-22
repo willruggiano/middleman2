@@ -628,18 +628,19 @@ type MergeRequest struct {
 // MergeRequestDetailResponse defines model for MergeRequestDetailResponse.
 type MergeRequestDetailResponse struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema           *string                  `json:"$schema,omitempty"`
-	DetailFetchedAt  *string                  `json:"detail_fetched_at,omitempty"`
-	DetailLoaded     bool                     `json:"detail_loaded"`
-	Events           *[]MREvent               `json:"events"`
-	MergeRequest     MergeRequest             `json:"merge_request"`
-	PlatformHost     string                   `json:"platform_host"`
-	RepoName         string                   `json:"repo_name"`
-	RepoOwner        string                   `json:"repo_owner"`
-	Warnings         *[]string                `json:"warnings,omitempty"`
-	WorkflowApproval WorkflowApprovalResponse `json:"workflow_approval"`
-	Workspace        *WorkspaceMRRef          `json:"workspace,omitempty"`
-	WorktreeLinks    *[]WorktreeLinkResponse  `json:"worktree_links"`
+	Schema              *string                  `json:"$schema,omitempty"`
+	DetailFetchedAt     *string                  `json:"detail_fetched_at,omitempty"`
+	DetailLoaded        bool                     `json:"detail_loaded"`
+	Events              *[]MREvent               `json:"events"`
+	HiddenThreadRootIds *[]int64                 `json:"hidden_thread_root_ids"`
+	MergeRequest        MergeRequest             `json:"merge_request"`
+	PlatformHost        string                   `json:"platform_host"`
+	RepoName            string                   `json:"repo_name"`
+	RepoOwner           string                   `json:"repo_owner"`
+	Warnings            *[]string                `json:"warnings,omitempty"`
+	WorkflowApproval    WorkflowApprovalResponse `json:"workflow_approval"`
+	Workspace           *WorkspaceMRRef          `json:"workspace,omitempty"`
+	WorktreeLinks       *[]WorktreeLinkResponse  `json:"worktree_links"`
 }
 
 // MergeRequestResponse defines model for MergeRequestResponse.

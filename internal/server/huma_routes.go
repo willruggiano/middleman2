@@ -635,16 +635,27 @@ func (s *Server) buildPullDetailResponse(
 			"load repo failed",
 		)
 	}
+	hidden, err := s.db.ActiveHiddenReviewThreadRoots(ctx, mr.ID, events)
+	if err != nil {
+		return mergeRequestDetailResponse{}, huma.Error500InternalServerError(
+			"compute hidden review threads failed",
+		)
+	}
+	if hidden == nil {
+		hidden = []int64{}
+	}
+
 	resp := mergeRequestDetailResponse{
-		MergeRequest:     mr,
-		Events:           events,
-		RepoOwner:        repo.Owner,
-		RepoName:         repo.Name,
-		PlatformHost:     repo.PlatformHost,
-		WorktreeLinks:    toWorktreeLinkResponses(dbLinks),
-		WorkflowApproval: s.workflowApprovalState(ctx, repo.Owner, repo.Name, mr, wfMode),
-		Warnings:         s.diffWarnings(mr),
-		DetailLoaded:     mr.DetailFetchedAt != nil,
+		MergeRequest:        mr,
+		Events:              events,
+		RepoOwner:           repo.Owner,
+		RepoName:            repo.Name,
+		PlatformHost:        repo.PlatformHost,
+		WorktreeLinks:       toWorktreeLinkResponses(dbLinks),
+		WorkflowApproval:    s.workflowApprovalState(ctx, repo.Owner, repo.Name, mr, wfMode),
+		Warnings:            s.diffWarnings(mr),
+		DetailLoaded:        mr.DetailFetchedAt != nil,
+		HiddenThreadRootIDs: hidden,
 	}
 	if mr.DetailFetchedAt != nil {
 		resp.DetailFetchedAt = formatUTCRFC3339(*mr.DetailFetchedAt)

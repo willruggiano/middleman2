@@ -1702,6 +1702,7 @@ export interface components {
             detail_fetched_at?: string;
             detail_loaded: boolean;
             events: components["schemas"]["MREvent"][] | null;
+            hidden_thread_root_ids: number[] | null;
             merge_request: components["schemas"]["MergeRequest"];
             platform_host: string;
             repo_name: string;
