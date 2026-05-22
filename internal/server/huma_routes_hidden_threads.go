@@ -33,6 +33,10 @@ type unhideReviewThreadInput struct {
 func (s *Server) hideReviewThread(
 	ctx context.Context, input *hideReviewThreadInput,
 ) (*emptyOutput, error) {
+	if input.Body.RootCommentID <= 0 {
+		return nil, huma.Error400BadRequest("root_comment_id must be positive")
+	}
+
 	mrID, err := s.lookupMRID(ctx, repoNumberPathRef{
 		owner: input.Owner, name: input.Name, number: input.Number,
 	})
@@ -40,11 +44,7 @@ func (s *Server) hideReviewThread(
 		return nil, huma.Error404NotFound("pull request not found")
 	}
 
-	if input.Body.RootCommentID <= 0 {
-		return nil, huma.Error400BadRequest("root_comment_id must be positive")
-	}
-
-	known, err := s.reviewCommentExistsOnMR(ctx, mrID, input.Body.RootCommentID)
+	known, err := s.db.HasReviewCommentOnMR(ctx, mrID, input.Body.RootCommentID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("validate root_comment_id: " + err.Error())
 	}
@@ -76,25 +76,4 @@ func (s *Server) unhideReviewThread(
 		return nil, huma.Error500InternalServerError("unhide thread: " + err.Error())
 	}
 	return &emptyOutput{}, nil
-}
-
-// reviewCommentExistsOnMR returns true when (mrID, platformID) refers
-// to a review_comment event we've synced. Used as a cheap sanity check
-// for write paths that take a platform comment id. COUNT(*) always
-// returns a single row (0 when nothing matches), so the only Scan
-// error is a real failure.
-func (s *Server) reviewCommentExistsOnMR(
-	ctx context.Context, mrID, platformID int64,
-) (bool, error) {
-	var count int
-	err := s.db.ReadDB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM middleman_mr_events
-		  WHERE merge_request_id = ? AND event_type = 'review_comment'
-		        AND platform_id = ?`,
-		mrID, platformID,
-	).Scan(&count)
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
 }

@@ -152,3 +152,23 @@ func (d *DB) ActiveHiddenReviewThreadRoots(
 	}
 	return out, nil
 }
+
+// HasReviewCommentOnMR returns true when (mrID, platformID) matches an
+// existing review_comment event on this MR. Used by write paths that
+// take a GitHub platform comment id as input — the cheap pre-write
+// sanity check that the id refers to a real comment on the right PR.
+func (d *DB) HasReviewCommentOnMR(
+	ctx context.Context, mrID, platformID int64,
+) (bool, error) {
+	var count int
+	err := d.ro.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM middleman_mr_events
+		  WHERE merge_request_id = ? AND event_type = 'review_comment'
+		        AND platform_id = ?`,
+		mrID, platformID,
+	).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}

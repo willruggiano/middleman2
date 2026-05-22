@@ -151,3 +151,51 @@ func TestActiveHiddenReviewThreadRoots(t *testing.T) {
 	assert.ElementsMatch([]int64{100, 300}, active,
 		"threads 200 and 400 each have a reply newer than hidden_at — should not be active")
 }
+
+func TestHasReviewCommentOnMR(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+	mrID := seedAIQuestionTestMR(t, d)
+
+	id := int64(777)
+	require.NoError(d.UpsertMREvents(ctx, []MREvent{{
+		MergeRequestID: mrID,
+		PlatformID:     &id,
+		EventType:      "review_comment",
+		Author:         "u",
+		Body:           "hi",
+		CreatedAt:      time.Now().UTC().Truncate(time.Second),
+		MetadataJSON:   `{"path":"f.go","line":1,"side":"RIGHT"}`,
+		DedupeKey:      "review-comment-777",
+	}}))
+
+	got, err := d.HasReviewCommentOnMR(ctx, mrID, 777)
+	require.NoError(err)
+	assert.True(got)
+
+	got, err = d.HasReviewCommentOnMR(ctx, mrID, 12345)
+	require.NoError(err)
+	assert.False(got, "unknown platform id")
+
+	// Different MR: same platform id should not match.
+	otherID, err := d.UpsertRepo(ctx, "github.com", "other", "repo")
+	require.NoError(err)
+	otherMR, err := d.UpsertMergeRequest(ctx, &MergeRequest{
+		RepoID:         otherID,
+		PlatformID:     888,
+		Number:         2,
+		URL:            "https://github.com/other/repo/pull/2",
+		Title:          "other",
+		Author:         "u",
+		State:          "open",
+		CreatedAt:      time.Now().UTC().Truncate(time.Second),
+		UpdatedAt:      time.Now().UTC().Truncate(time.Second),
+		LastActivityAt: time.Now().UTC().Truncate(time.Second),
+	})
+	require.NoError(err)
+	got, err = d.HasReviewCommentOnMR(ctx, otherMR, 777)
+	require.NoError(err)
+	assert.False(got, "platform id matches a row on a different MR")
+}
