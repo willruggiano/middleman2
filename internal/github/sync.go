@@ -521,12 +521,16 @@ func (s *Syncer) TriggerRun(ctx context.Context) {
 	}
 	merged, cancel := s.mergeWithRunCtx(ctx)
 	s.wg.Add(1)
+	s.reposMu.Lock()
+	repos := make([]RepoRef, len(s.repos))
+	copy(repos, s.repos)
+	s.reposMu.Unlock()
 	s.lifecycleMu.Unlock()
 
 	go func() {
 		defer s.wg.Done()
 		defer cancel()
-		s.runOnce(merged, true)
+		s.runOnce(merged, true, repos)
 	}()
 }
 
@@ -1045,12 +1049,17 @@ func (s *Syncer) publishMonotonicProgress(
 // per-host GitHub rate limit and abuse-detection thresholds happy
 // while still capturing most of the wall-clock win on network I/O.
 func (s *Syncer) RunOnce(ctx context.Context) {
-	s.runOnce(ctx, false)
+	s.reposMu.Lock()
+	repos := make([]RepoRef, len(s.repos))
+	copy(repos, s.repos)
+	s.reposMu.Unlock()
+	s.runOnce(ctx, false, repos)
 }
 
 func (s *Syncer) runOnce(
 	ctx context.Context,
 	bypassNextSyncAfter bool,
+	repos []RepoRef,
 ) {
 	if !s.running.CompareAndSwap(false, true) {
 		return
@@ -1061,11 +1070,6 @@ func (s *Syncer) runOnce(
 	// made during background sync. User-initiated server
 	// handler paths do not carry this key and are not counted.
 	ctx = WithSyncBudget(ctx)
-
-	s.reposMu.Lock()
-	repos := make([]RepoRef, len(s.repos))
-	copy(repos, s.repos)
-	s.reposMu.Unlock()
 
 	total := len(repos)
 	s.publishStatus(&SyncStatus{
