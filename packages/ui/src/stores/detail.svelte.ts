@@ -2,6 +2,7 @@ import type {
   KanbanStatus,
   PullDetail,
 } from "../api/types.js";
+import { apiErrorMessage } from "../api/errors.js";
 import type { MiddlemanClient } from "../types.js";
 
 export interface PublishedReviewComment {
@@ -45,13 +46,6 @@ export interface DetailStoreOptions {
     ) => () => void;
     refreshSyncStatus?: () => Promise<void>;
   };
-}
-
-function apiErrorMessage(
-  error: { detail?: string; title?: string },
-  fallback: string,
-): string {
-  return error.detail ?? error.title ?? fallback;
 }
 
 export function createDetailStore(
