@@ -13,6 +13,15 @@ vi.stubGlobal("fetch", mockFetch);
 
 import { createDiffStore } from "@middleman/ui/stores/diff";
 import type { DiffScope } from "@middleman/ui/stores/diff";
+import type { MiddlemanClient } from "@middleman/ui";
+
+function stubClient(): MiddlemanClient {
+  return {
+    GET: vi.fn(async () => ({ data: undefined, error: undefined })),
+    POST: vi.fn(async () => ({ data: undefined, error: undefined })),
+    DELETE: vi.fn(async () => ({ data: undefined, error: undefined })),
+  } as unknown as MiddlemanClient;
+}
 
 function makeDiffResponse() {
   return {
@@ -68,7 +77,7 @@ describe("diff store scope", () => {
   beforeEach(() => {
     storage.clear();
     mockFetch.mockReset();
-    store = createDiffStore();
+    store = createDiffStore({ client: stubClient() });
   });
 
   it("starts at HEAD scope", () => {

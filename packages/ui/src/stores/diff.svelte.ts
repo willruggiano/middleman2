@@ -4,6 +4,8 @@ import type {
   FilesResult,
   CommitInfo,
 } from "../api/types.js";
+import type { MiddlemanClient } from "../types.js";
+import { apiErrorMessage } from "../api/errors.js";
 
 function sortFilesByPath<T extends { files?: DiffFile[] }>(result: T): T {
   if (result.files) {
@@ -31,6 +33,7 @@ export interface Patchset {
 }
 
 export interface DiffStoreOptions {
+  client: MiddlemanClient;
   getBasePath?: () => string;
 }
 
@@ -216,8 +219,9 @@ function saveReviewedFiles(rf: Record<string, string[]>): void {
   safeSetItem("diff-reviewed-files", JSON.stringify(rf));
 }
 
-export function createDiffStore(opts?: DiffStoreOptions) {
-  const getBasePath = opts?.getBasePath ?? (() => "/");
+export function createDiffStore(opts: DiffStoreOptions) {
+  const apiClient = opts.client;
+  const getBasePath = opts.getBasePath ?? (() => "/");
 
   let diff = $state<DiffResult | null>(null);
   let loading = $state(false);
@@ -275,6 +279,12 @@ export function createDiffStore(opts?: DiffStoreOptions) {
   function getCurrentPR(): { owner: string; name: string; number: number } | null {
     if (!currentOwner) return null;
     return { owner: currentOwner, name: currentName, number: currentNumber };
+  }
+
+  function setActivePR(owner: string, name: string, number: number): void {
+    currentOwner = owner;
+    currentName = name;
+    currentNumber = number;
   }
 
   // --- reads ---
@@ -381,15 +391,20 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     refreshing = true;
     refreshError = null;
     try {
-      const basePath = getBasePath();
-      const syncURL =
-        `${basePath}api/v1/repos/` +
-        `${encodeURIComponent(currentOwner)}/` +
-        `${encodeURIComponent(currentName)}/` +
-        `pulls/${currentNumber}/sync`;
-      const res = await fetch(syncURL, { method: "POST" });
-      if (!res.ok) {
-        refreshError = `Sync failed: ${res.status} ${res.statusText}`;
+      const { error } = await apiClient.POST(
+        "/repos/{owner}/{name}/pulls/{number}/sync",
+        {
+          params: {
+            path: {
+              owner: currentOwner,
+              name: currentName,
+              number: currentNumber,
+            },
+          },
+        },
+      );
+      if (error) {
+        refreshError = apiErrorMessage(error, "sync failed");
         return;
       }
     } catch (err) {
@@ -1341,6 +1356,7 @@ export function createDiffStore(opts?: DiffStoreOptions) {
     isFileCollapsed,
     toggleFileCollapsed,
     loadDiff,
+    setActivePR,
     refresh,
     isRefreshing,
     getRefreshError,
