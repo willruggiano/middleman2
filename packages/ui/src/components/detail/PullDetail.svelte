@@ -67,6 +67,66 @@
     };
   });
 
+  // User-adjustable width for the review-nav wrapper. Mirrors the
+  // pointer-capture resize pattern in
+  // packages/ui/src/components/diff/CollapsedRegion.svelte.
+  const DEFAULT_REVIEW_NAV_WIDTH = 280;
+  const MIN_REVIEW_NAV_WIDTH = 180;
+  const MAX_REVIEW_NAV_WIDTH = 560;
+
+  function loadReviewNavWidth(): number {
+    try {
+      const raw = localStorage.getItem("pr-review-nav-width");
+      if (!raw) return DEFAULT_REVIEW_NAV_WIDTH;
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return DEFAULT_REVIEW_NAV_WIDTH;
+      return Math.max(
+        MIN_REVIEW_NAV_WIDTH,
+        Math.min(MAX_REVIEW_NAV_WIDTH, Math.round(n)),
+      );
+    } catch {
+      return DEFAULT_REVIEW_NAV_WIDTH;
+    }
+  }
+
+  let reviewNavWidth = $state(loadReviewNavWidth());
+  function persistReviewNavWidth(w: number): void {
+    try {
+      localStorage.setItem("pr-review-nav-width", String(w));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  let resizing = false;
+  let resizeStartX = 0;
+  let resizeStartWidth = 0;
+
+  function onResizeStart(e: PointerEvent): void {
+    if (reviewNavCollapsed) return; // no resize when collapsed
+    resizing = true;
+    resizeStartX = e.clientX;
+    resizeStartWidth = reviewNavWidth;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
+  function onResizeMove(e: PointerEvent): void {
+    if (!resizing) return;
+    const delta = e.clientX - resizeStartX;
+    const next = Math.max(
+      MIN_REVIEW_NAV_WIDTH,
+      Math.min(MAX_REVIEW_NAV_WIDTH, resizeStartWidth + delta),
+    );
+    reviewNavWidth = next;
+  }
+
+  function onResizeEnd(e: PointerEvent): void {
+    if (!resizing) return;
+    resizing = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    persistReviewNavWidth(reviewNavWidth);
+  }
+
   $effect(() => {
     void detailStore.loadDetail(owner, name, number);
     detailStore.startDetailPolling(owner, name, number);
@@ -384,8 +444,25 @@
       {/if}
       {#if !hideTabs && activeTab === "review"}
         <div class="files-layout">
-          <aside class="files-sidebar" class:files-sidebar--collapsed={reviewNavCollapsed}>
+          <aside
+            class="files-sidebar"
+            class:files-sidebar--collapsed={reviewNavCollapsed}
+            style:width={reviewNavCollapsed ? "30px" : `${reviewNavWidth}px`}
+          >
             <DiffSidebar />
+            {#if !reviewNavCollapsed}
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="files-sidebar__resize"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize review nav"
+                onpointerdown={onResizeStart}
+                onpointermove={onResizeMove}
+                onpointerup={onResizeEnd}
+                onpointercancel={onResizeEnd}
+              ></div>
+            {/if}
           </aside>
           <div class="files-main">
             <ReviewCoverBanner {pr} {owner} {name} />
@@ -879,18 +956,34 @@
   }
 
   .files-sidebar {
-    width: 280px;
     flex-shrink: 0;
     border-right: 1px solid var(--border-default);
     background: var(--bg-surface);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
+    position: relative;
   }
 
   .files-sidebar--collapsed {
     width: 30px;
     min-width: 30px;
+  }
+
+  .files-sidebar__resize {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    background: transparent;
+    z-index: 2;
+  }
+
+  .files-sidebar__resize:hover {
+    background: var(--accent-blue);
+    opacity: 0.4;
   }
 
   .files-main {
@@ -904,14 +997,16 @@
 
   /* On narrow viewports the fixed 280px sidebar would crush the
      diff pane. Stack the sidebar above the diff with a capped
-     height so the diff stays readable. */
+     height so the diff stays readable. The !important is required
+     because the wrapper now carries an inline style:width that would
+     otherwise win the cascade. */
   @media (max-width: 720px) {
     .files-layout {
       flex-direction: column;
     }
 
     .files-sidebar {
-      width: 100%;
+      width: 100% !important;
       max-height: 35vh;
       border-right: none;
       border-bottom: 1px solid var(--border-default);
