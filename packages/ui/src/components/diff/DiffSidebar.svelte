@@ -98,17 +98,45 @@
 </script>
 
 {#if isReviewNavCollapsed()}
-  <button
-    type="button"
-    class="diff-sidebar--rail"
-    onclick={toggleReviewNavCollapsed}
-    aria-label="Expand review nav"
-    title="Expand review nav"
-  >
-    <span class="diff-sidebar__rail-label">
-      {commitCount}c &middot; {draftCount}d &middot; {questionCount}q &middot; {fileCount}f
-    </span>
-  </button>
+  <div class="diff-sidebar--rail">
+    <button
+      type="button"
+      class="diff-sidebar__rail-nav"
+      onclick={() => diff.stepNext()}
+      disabled={diff.getScope().kind === "head"}
+      aria-label="Next commit"
+      title="Next commit  ]"
+    >
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+           stroke="currentColor" stroke-width="1.5">
+        <polyline points="4,2 7,5 4,8" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
+    <button
+      type="button"
+      class="diff-sidebar__rail-body"
+      onclick={toggleReviewNavCollapsed}
+      aria-label="Expand review nav"
+      title={`Expand review nav · ${commitCount} commits, ${draftCount} pending drafts, ${questionCount} AI questions, ${fileCount} files`}
+    >
+      <span class="diff-sidebar__rail-label">
+        {commitCount}c &middot; {draftCount}d &middot; {questionCount}q &middot; {fileCount}f
+      </span>
+    </button>
+    <button
+      type="button"
+      class="diff-sidebar__rail-nav"
+      onclick={() => diff.stepPrev()}
+      disabled={(diff.getCommitIndex()?.current ?? 0) === 1}
+      aria-label="Previous commit"
+      title="Previous commit  ["
+    >
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+           stroke="currentColor" stroke-width="1.5">
+        <polyline points="6,2 3,5 6,8" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
+  </div>
 {:else}
   <button
     type="button"
@@ -334,14 +362,47 @@
     border: none;
     background: var(--bg-inset);
     color: var(--text-muted);
-    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .diff-sidebar__rail-nav {
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 6px 0;
+    height: 24px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
   }
 
-  .diff-sidebar--rail:hover {
+  .diff-sidebar__rail-nav:hover:not(:disabled) {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .diff-sidebar__rail-nav:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+
+  .diff-sidebar__rail-body {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 6px 0;
+    min-height: 60px;
+  }
+
+  .diff-sidebar__rail-body:hover {
     background: var(--bg-surface-hover);
     color: var(--text-primary);
   }
