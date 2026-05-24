@@ -138,7 +138,7 @@
   }
 </script>
 
-{#if visible && data && data.members}
+{#if visible && data}
   {#if collapsed}
     <button
       type="button"
@@ -165,53 +165,57 @@
       </button>
       <div class="stack-header">STACK &middot; {data.stack_name}</div>
 
-      <div class="stack-chain">
-        {#each data.members as member, i}
-          {@const isCurrent = member.number === number}
-          {@const outline = isOutline(member)}
-          {@const ci = ciLabel(member)}
-          {@const review = reviewLabel(member)}
-          {@const isLast = i === data.members.length - 1}
-          <div class="chain-row">
-            <div class="chain-rail">
-              <span
-                class="chain-dot"
-                style:background={isCurrent ? "var(--accent-purple)" : outline ? "transparent" : getDotColor(member)}
-                style:border-color={isCurrent ? "var(--accent-purple)" : outline ? "#30363d" : "transparent"}
-                style:width={isCurrent ? "10px" : "8px"}
-                style:height={isCurrent ? "10px" : "8px"}
-              ></span>
-              {#if !isLast}
-                <span class="chain-line"></span>
-              {/if}
+      {#if data.members && data.members.length > 0}
+        <div class="stack-chain">
+          {#each data.members as member, i}
+            {@const isCurrent = member.number === number}
+            {@const outline = isOutline(member)}
+            {@const ci = ciLabel(member)}
+            {@const review = reviewLabel(member)}
+            {@const isLast = i === data.members.length - 1}
+            <div class="chain-row">
+              <div class="chain-rail">
+                <span
+                  class="chain-dot"
+                  style:background={isCurrent ? "var(--accent-purple)" : outline ? "transparent" : getDotColor(member)}
+                  style:border-color={isCurrent ? "var(--accent-purple)" : outline ? "#30363d" : "transparent"}
+                  style:width={isCurrent ? "10px" : "8px"}
+                  style:height={isCurrent ? "10px" : "8px"}
+                ></span>
+                {#if !isLast}
+                  <span class="chain-line"></span>
+                {/if}
+              </div>
+              <div
+                class="chain-member"
+                class:chain-member--current={isCurrent}
+                class:chain-member--dimmed={member.blocked_by != null && !isCurrent}
+              >
+                {#if isCurrent}
+                  <div class="current-label">You are here</div>
+                {/if}
+                <button class="member-link" onclick={() => navigate(`/pulls/${owner}/${name}/${member.number}`)}>
+                  #{member.number} {member.title}
+                </button>
+                {#if ci || review}
+                  <div class="member-badges">
+                    {#if ci}<span style:color={ci.color}>{ci.text}</span>{/if}
+                    {#if review}<span style:color={review.color}>{review.text}</span>{/if}
+                  </div>
+                {/if}
+                {#if isBaseReady(member, i)}
+                  <div class="ready-label">Ready to merge &rarr; {member.base_branch || "base"}</div>
+                {/if}
+                {#if member.blocked_by != null}
+                  <div class="blocked-label">blocked by #{member.blocked_by}</div>
+                {/if}
+              </div>
             </div>
-            <div
-              class="chain-member"
-              class:chain-member--current={isCurrent}
-              class:chain-member--dimmed={member.blocked_by != null && !isCurrent}
-            >
-              {#if isCurrent}
-                <div class="current-label">You are here</div>
-              {/if}
-              <button class="member-link" onclick={() => navigate(`/pulls/${owner}/${name}/${member.number}`)}>
-                #{member.number} {member.title}
-              </button>
-              {#if ci || review}
-                <div class="member-badges">
-                  {#if ci}<span style:color={ci.color}>{ci.text}</span>{/if}
-                  {#if review}<span style:color={review.color}>{review.text}</span>{/if}
-                </div>
-              {/if}
-              {#if isBaseReady(member, i)}
-                <div class="ready-label">Ready to merge &rarr; {member.base_branch || "base"}</div>
-              {/if}
-              {#if member.blocked_by != null}
-                <div class="blocked-label">blocked by #{member.blocked_by}</div>
-              {/if}
-            </div>
-          </div>
-        {/each}
-      </div>
+          {/each}
+        </div>
+      {:else}
+        <div class="stack-chain stack-chain--empty">No stack members</div>
+      {/if}
 
     </aside>
   {/if}
@@ -287,6 +291,13 @@
   .stack-chain {
     display: flex;
     flex-direction: column;
+  }
+
+  .stack-chain--empty {
+    padding: 12px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-style: italic;
   }
 
   .chain-row {

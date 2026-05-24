@@ -15,17 +15,9 @@
   import ReadyForReviewButton from "./ReadyForReviewButton.svelte";
   import ActionButton from "../shared/ActionButton.svelte";
   import GitHubLabels from "../shared/GitHubLabels.svelte";
-  import DiffView from "../diff/DiffView.svelte";
-  import DiffSidebar from "../diff/DiffSidebar.svelte";
   import CIStatus from "./CIStatus.svelte";
-  import ReviewCoverBanner from "./ReviewCoverBanner.svelte";
-  import ReviewBriefCard from "./ReviewBriefCard.svelte";
-  import PRNotesPanel from "./PRNotesPanel.svelte";
-  import PatchsetPicker from "../diff/PatchsetPicker.svelte";
-  import CommitMessageBanner from "../diff/CommitMessageBanner.svelte";
-  import TopSectionsStrip from "./TopSectionsStrip.svelte";
 
-  const { detail: detailStore, diff: diffStore, pulls, activity } = getStores();
+  const { detail: detailStore, pulls, activity } = getStores();
   const client = getClient();
   const actions = getActions();
   const uiConfig = getUIConfig();
@@ -45,142 +37,6 @@
 
   let activeTab = $state<"review" | "activity">("review");
   let ciExpanded = $state(false);
-
-  let topConsolidated = $state(
-    typeof localStorage !== "undefined" && localStorage.getItem("pr-top-sections-consolidated") === "true",
-  );
-  let peeked = $state<string | null>(null);
-
-  // The pip set is a snapshot of each section's collapsed state at the
-  // moment the user enters consolidation. `muted` = the section was
-  // individually collapsed before consolidation; unmuted pips were
-  // expanded sections. We read the same localStorage keys the section
-  // components themselves write. The snapshot is refreshed inside
-  // setTopConsolidated(true) so a fresh entry reflects current state;
-  // it intentionally does not live-update while consolidated because
-  // peek is ephemeral.
-  type Pip = { id: string; label: string; muted: boolean };
-
-  function readKey(k: string): boolean {
-    try { return localStorage.getItem(k) === "true"; }
-    catch { return false; }
-  }
-
-  function patchsetPipLabel(): string {
-    const list = diffStore.getPatchsets();
-    if (!list || list.length === 0) return "patchset";
-    const s = diffStore.getScope();
-    const selected = s.kind === "patchsets" ? s.toNumber : list[list.length - 1]!.number;
-    return `patchset ${selected}/${list.length}`;
-  }
-
-  function computePips(): Pip[] {
-    return [
-      { id: "cover",    label: "cover",              muted: readKey("pr-cover-collapsed") },
-      { id: "msg",      label: "message",            muted: readKey("pr-commit-msg-collapsed") },
-      { id: "patchset", label: patchsetPipLabel(),   muted: readKey("pr-patchset-collapsed") },
-      { id: "brief",    label: "brief",              muted: readKey("pr-brief-collapsed") },
-    ];
-  }
-
-  let pips = $state<Pip[]>(computePips());
-
-  function setTopConsolidated(next: boolean): void {
-    topConsolidated = next;
-    peeked = null;
-    if (next) {
-      pips = computePips();
-    }
-    try {
-      localStorage.setItem("pr-top-sections-consolidated", String(next));
-    } catch { /* ignore */ }
-  }
-
-  function togglePeek(id: string): void {
-    peeked = peeked === id ? null : id;
-  }
-
-  // Mirror the DiffSidebar collapse-to-rail state so the wrapper
-  // <aside class="files-sidebar"> can shrink to a 30px rail width
-  // when the inner sidebar collapses. DiffSidebar owns the storage
-  // write; we just observe via the cross-tab `storage` event and a
-  // same-tab custom `pr-ui-state` event it dispatches.
-  let reviewNavCollapsed = $state(
-    typeof localStorage !== "undefined" &&
-      localStorage.getItem("pr-review-nav-collapsed") === "true",
-  );
-  $effect(() => {
-    if (typeof window === "undefined") return;
-    const handler = (): void => {
-      reviewNavCollapsed = localStorage.getItem("pr-review-nav-collapsed") === "true";
-    };
-    window.addEventListener("storage", handler);
-    window.addEventListener("pr-ui-state", handler);
-    return () => {
-      window.removeEventListener("storage", handler);
-      window.removeEventListener("pr-ui-state", handler);
-    };
-  });
-
-  // User-adjustable width for the review-nav wrapper. Mirrors the
-  // pointer-capture resize pattern in
-  // packages/ui/src/components/diff/CollapsedRegion.svelte.
-  const DEFAULT_REVIEW_NAV_WIDTH = 280;
-  const MIN_REVIEW_NAV_WIDTH = 180;
-  const MAX_REVIEW_NAV_WIDTH = 560;
-
-  function loadReviewNavWidth(): number {
-    try {
-      const raw = localStorage.getItem("pr-review-nav-width");
-      if (!raw) return DEFAULT_REVIEW_NAV_WIDTH;
-      const n = Number(raw);
-      if (!Number.isFinite(n)) return DEFAULT_REVIEW_NAV_WIDTH;
-      return Math.max(
-        MIN_REVIEW_NAV_WIDTH,
-        Math.min(MAX_REVIEW_NAV_WIDTH, Math.round(n)),
-      );
-    } catch {
-      return DEFAULT_REVIEW_NAV_WIDTH;
-    }
-  }
-
-  let reviewNavWidth = $state(loadReviewNavWidth());
-  function persistReviewNavWidth(w: number): void {
-    try {
-      localStorage.setItem("pr-review-nav-width", String(w));
-    } catch {
-      /* ignore */
-    }
-  }
-
-  let resizing = false;
-  let resizeStartX = 0;
-  let resizeStartWidth = 0;
-
-  function onResizeStart(e: PointerEvent): void {
-    if (reviewNavCollapsed) return; // no resize when collapsed
-    resizing = true;
-    resizeStartX = e.clientX;
-    resizeStartWidth = reviewNavWidth;
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-  }
-
-  function onResizeMove(e: PointerEvent): void {
-    if (!resizing) return;
-    const delta = e.clientX - resizeStartX;
-    const next = Math.max(
-      MIN_REVIEW_NAV_WIDTH,
-      Math.min(MAX_REVIEW_NAV_WIDTH, resizeStartWidth + delta),
-    );
-    reviewNavWidth = next;
-  }
-
-  function onResizeEnd(e: PointerEvent): void {
-    if (!resizing) return;
-    resizing = false;
-    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-    persistReviewNavWidth(reviewNavWidth);
-  }
 
   $effect(() => {
     void detailStore.loadDetail(owner, name, number);
@@ -497,68 +353,7 @@
           </button>
         </div>
       {/if}
-      {#if !hideTabs && activeTab === "review"}
-        <div class="files-layout">
-          <aside
-            class="files-sidebar"
-            class:files-sidebar--collapsed={reviewNavCollapsed}
-            style:width={reviewNavCollapsed ? "30px" : `${reviewNavWidth}px`}
-          >
-            <DiffSidebar />
-            {#if !reviewNavCollapsed}
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div
-                class="files-sidebar__resize"
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="Resize review nav"
-                onpointerdown={onResizeStart}
-                onpointermove={onResizeMove}
-                onpointerup={onResizeEnd}
-                onpointercancel={onResizeEnd}
-              ></div>
-            {/if}
-          </aside>
-          <div class="files-main">
-            <div class="top-sections" class:top-sections--consolidated={topConsolidated}>
-              {#if !topConsolidated}
-                <button
-                  type="button"
-                  class="top-sections__consolidate"
-                  onclick={() => setTopConsolidated(true)}
-                  aria-label="Consolidate top sections"
-                  title="Consolidate top sections"
-                >
-                  ⋯
-                </button>
-                <ReviewCoverBanner {pr} {owner} {name} />
-                <CommitMessageBanner {owner} {name} {number} />
-                <PatchsetPicker />
-                <ReviewBriefCard {owner} {name} {number} />
-              {:else}
-                <TopSectionsStrip
-                  {pips}
-                  peeked={peeked}
-                  onPeek={togglePeek}
-                  onExpandAll={() => setTopConsolidated(false)}
-                />
-                {#if peeked === "cover"}
-                  <ReviewCoverBanner {pr} {owner} {name} forceExpanded={true} />
-                {:else if peeked === "msg"}
-                  <CommitMessageBanner {owner} {name} {number} forceExpanded={true} />
-                {:else if peeked === "patchset"}
-                  <PatchsetPicker forceExpanded={true} />
-                {:else if peeked === "brief"}
-                  <ReviewBriefCard {owner} {name} {number} forceExpanded={true} />
-                {/if}
-              {/if}
-            </div>
-            <DiffView {owner} {name} {number} />
-            <PRNotesPanel />
-          </div>
-        </div>
-      {:else}
-        <div class="pull-detail">
+      <div class="pull-detail">
       {#if detailStore.isStaleRefreshing()}
         <div class="refresh-banner">
           <span class="sync-dot"></span>
@@ -1002,7 +797,6 @@
         {/if}
       </div>
         </div>
-      {/if}
     </div>
   {/if}
 {/if}
@@ -1030,101 +824,6 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
-  }
-
-  .files-layout {
-    display: flex;
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .files-sidebar {
-    flex-shrink: 0;
-    border-right: 1px solid var(--border-default);
-    background: var(--bg-surface);
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    position: relative;
-  }
-
-  .files-sidebar--collapsed {
-    width: 30px;
-    min-width: 30px;
-  }
-
-  .files-sidebar__resize {
-    position: absolute;
-    top: 0;
-    right: -3px;
-    width: 6px;
-    height: 100%;
-    cursor: col-resize;
-    background: transparent;
-    z-index: 2;
-  }
-
-  .files-sidebar__resize:hover {
-    background: var(--accent-blue);
-    opacity: 0.4;
-  }
-
-  .files-main {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .top-sections {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .top-sections__consolidate {
-    position: absolute;
-    top: 4px;
-    right: 8px;
-    z-index: 5;
-    padding: 2px 8px;
-    font-size: 11px;
-    color: var(--text-muted);
-    background: var(--bg-surface);
-    border: 1px solid var(--border-muted);
-    border-radius: 999px;
-    cursor: pointer;
-  }
-
-  .top-sections__consolidate:hover {
-    color: var(--text-primary);
-    border-color: var(--accent-blue);
-  }
-
-
-  /* On narrow viewports the fixed 280px sidebar would crush the
-     diff pane. Stack the sidebar above the diff with a capped
-     height so the diff stays readable. The !important is required
-     because the wrapper now carries an inline style:width that would
-     otherwise win the cascade. */
-  @media (max-width: 720px) {
-    .files-layout {
-      flex-direction: column;
-    }
-
-    .files-sidebar {
-      width: 100% !important;
-      max-height: 35vh;
-      border-right: none;
-      border-bottom: 1px solid var(--border-default);
-    }
-
-    .files-main {
-      flex: 1;
-      min-height: 0;
-    }
   }
 
   .pull-detail {

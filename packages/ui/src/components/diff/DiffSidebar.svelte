@@ -1,6 +1,10 @@
 <script lang="ts">
   import type { DiffFile } from "../../api/types.js";
   import { getStores } from "../../context.js";
+  import {
+    isReviewNavCollapsed,
+    toggleReviewNavCollapsed,
+  } from "../../lib/uiState.svelte.js";
   import CommitListSection from "./CommitListSection.svelte";
   import QuestionsSection from "./QuestionsSection.svelte";
   import PendingCommentsSection from "./PendingCommentsSection.svelte";
@@ -11,28 +15,9 @@
   const { diff, pulls, ai } = getStores();
 
   // Persisted collapse-to-rail state. When collapsed we render a
-  // narrow vertical rail with a tiny counts label; the outer
-  // <aside class="files-sidebar"> wrapper in PullDetail listens for
-  // the same key (and our custom pr-ui-state event) so its width
-  // shrinks in lockstep.
-  let collapsed = $state(
-    typeof localStorage !== "undefined" &&
-      localStorage.getItem("pr-review-nav-collapsed") === "true",
-  );
-  function toggleCollapsed(): void {
-    collapsed = !collapsed;
-    try {
-      localStorage.setItem("pr-review-nav-collapsed", String(collapsed));
-      if (typeof window !== "undefined") {
-        // The browser only fires 'storage' across tabs; dispatch a
-        // custom event so same-tab listeners (PullDetail's wrapper)
-        // can react immediately.
-        window.dispatchEvent(new CustomEvent("pr-ui-state"));
-      }
-    } catch {
-      /* ignore */
-    }
-  }
+  // narrow vertical rail with a tiny counts label. The outer
+  // <aside class="files-sidebar"> wrapper in PullDetail reads from
+  // the same shared $state module so its width shrinks in lockstep.
 
   // Counts for the rail label so the collapsed sidebar still gives
   // a glanceable signal of "how much is in here right now".
@@ -112,11 +97,11 @@
   });
 </script>
 
-{#if collapsed}
+{#if isReviewNavCollapsed()}
   <button
     type="button"
     class="diff-sidebar--rail"
-    onclick={toggleCollapsed}
+    onclick={toggleReviewNavCollapsed}
     aria-label="Expand review nav"
     title="Expand review nav"
   >
@@ -128,7 +113,7 @@
   <button
     type="button"
     class="diff-sidebar__collapse"
-    onclick={toggleCollapsed}
+    onclick={toggleReviewNavCollapsed}
     aria-label="Collapse review nav"
     title="Collapse review nav"
   >
