@@ -23,8 +23,9 @@
   import PRNotesPanel from "./PRNotesPanel.svelte";
   import PatchsetPicker from "../diff/PatchsetPicker.svelte";
   import CommitMessageBanner from "../diff/CommitMessageBanner.svelte";
+  import TopSectionsStrip from "./TopSectionsStrip.svelte";
 
-  const { detail: detailStore, pulls, activity } = getStores();
+  const { detail: detailStore, diff: diffStore, pulls, activity } = getStores();
   const client = getClient();
   const actions = getActions();
   const uiConfig = getUIConfig();
@@ -44,6 +45,60 @@
 
   let activeTab = $state<"review" | "activity">("review");
   let ciExpanded = $state(false);
+
+  let topConsolidated = $state(
+    typeof localStorage !== "undefined" && localStorage.getItem("pr-top-sections-consolidated") === "true",
+  );
+  let peeked = $state<string | null>(null);
+
+  // The pip set is a snapshot of each section's collapsed state at the
+  // moment the user enters consolidation. `muted` = the section was
+  // individually collapsed before consolidation; unmuted pips were
+  // expanded sections. We read the same localStorage keys the section
+  // components themselves write. The snapshot is refreshed inside
+  // setTopConsolidated(true) so a fresh entry reflects current state;
+  // it intentionally does not live-update while consolidated because
+  // peek is ephemeral.
+  type Pip = { id: string; label: string; muted: boolean };
+
+  function readKey(k: string): boolean {
+    try { return localStorage.getItem(k) === "true"; }
+    catch { return false; }
+  }
+
+  function patchsetPipLabel(): string {
+    const list = diffStore.getPatchsets();
+    if (!list || list.length === 0) return "patchset";
+    const s = diffStore.getScope();
+    const selected = s.kind === "patchsets" ? s.toNumber : list[list.length - 1]!.number;
+    return `patchset ${selected}/${list.length}`;
+  }
+
+  function computePips(): Pip[] {
+    return [
+      { id: "cover",    label: "cover",              muted: readKey("pr-cover-collapsed") },
+      { id: "msg",      label: "message",            muted: readKey("pr-commit-msg-collapsed") },
+      { id: "patchset", label: patchsetPipLabel(),   muted: readKey("pr-patchset-collapsed") },
+      { id: "brief",    label: "brief",              muted: readKey("pr-brief-collapsed") },
+    ];
+  }
+
+  let pips = $state<Pip[]>(computePips());
+
+  function setTopConsolidated(next: boolean): void {
+    topConsolidated = next;
+    peeked = null;
+    if (next) {
+      pips = computePips();
+    }
+    try {
+      localStorage.setItem("pr-top-sections-consolidated", String(next));
+    } catch { /* ignore */ }
+  }
+
+  function togglePeek(id: string): void {
+    peeked = peeked === id ? null : id;
+  }
 
   // Mirror the DiffSidebar collapse-to-rail state so the wrapper
   // <aside class="files-sidebar"> can shrink to a 30px rail width
@@ -465,10 +520,39 @@
             {/if}
           </aside>
           <div class="files-main">
-            <ReviewCoverBanner {pr} {owner} {name} />
-            <CommitMessageBanner {owner} {name} {number} />
-            <PatchsetPicker />
-            <ReviewBriefCard {owner} {name} {number} />
+            <div class="top-sections" class:top-sections--consolidated={topConsolidated}>
+              {#if !topConsolidated}
+                <button
+                  type="button"
+                  class="top-sections__consolidate"
+                  onclick={() => setTopConsolidated(true)}
+                  aria-label="Consolidate top sections"
+                  title="Consolidate top sections"
+                >
+                  ⋯
+                </button>
+                <ReviewCoverBanner {pr} {owner} {name} />
+                <CommitMessageBanner {owner} {name} {number} />
+                <PatchsetPicker />
+                <ReviewBriefCard {owner} {name} {number} />
+              {:else}
+                <TopSectionsStrip
+                  {pips}
+                  peeked={peeked}
+                  onPeek={togglePeek}
+                  onExpandAll={() => setTopConsolidated(false)}
+                />
+                {#if peeked === "cover"}
+                  <ReviewCoverBanner {pr} {owner} {name} forceExpanded={true} />
+                {:else if peeked === "msg"}
+                  <CommitMessageBanner {owner} {name} {number} forceExpanded={true} />
+                {:else if peeked === "patchset"}
+                  <PatchsetPicker forceExpanded={true} />
+                {:else if peeked === "brief"}
+                  <ReviewBriefCard {owner} {name} {number} forceExpanded={true} />
+                {/if}
+              {/if}
+            </div>
             <DiffView {owner} {name} {number} />
             <PRNotesPanel />
           </div>
@@ -992,6 +1076,31 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+
+  .top-sections {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .top-sections__consolidate {
+    position: absolute;
+    top: 4px;
+    right: 8px;
+    z-index: 5;
+    padding: 2px 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-muted);
+    border-radius: 999px;
+    cursor: pointer;
+  }
+
+  .top-sections__consolidate:hover {
+    color: var(--text-primary);
+    border-color: var(--accent-blue);
   }
 
 

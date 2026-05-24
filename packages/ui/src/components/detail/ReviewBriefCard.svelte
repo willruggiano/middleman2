@@ -8,9 +8,14 @@
     owner: string;
     name: string;
     number: number;
+    // Render the body regardless of the persisted `collapsed` flag.
+    // Used by the consolidated top-sections "peek" flow so a previously
+    // collapsed brief still reveals its body when the user clicks the
+    // pip. Defaults to false so the stacked card honors localStorage.
+    forceExpanded?: boolean;
   }
 
-  const { owner, name, number }: Props = $props();
+  const { owner, name, number, forceExpanded = false }: Props = $props();
 
   const { brief: briefStore, diff: diffStore, fileResolver } = getStores();
 
@@ -38,8 +43,9 @@
     }
   }
   // Backwards-compatible alias for the existing template — `expanded`
-  // is the inverse of `collapsed`. Avoids renaming every callsite.
-  const expanded = $derived(!collapsed);
+  // is the inverse of `collapsed`, with the peek-flow `forceExpanded`
+  // override folded in so a single derived covers every template branch.
+  const expanded = $derived(!collapsed || forceExpanded);
 
   // Auto-expand when a new brief finishes so the reviewer can see the
   // result without clicking twice. We update the persisted collapsed

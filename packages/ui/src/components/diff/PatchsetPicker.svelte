@@ -9,6 +9,16 @@
   // Loads lazily on first mount so single-push PRs never pay the
   // round-trip.
 
+  interface Props {
+    // Render the chips regardless of the persisted `collapsed` flag.
+    // Used by the consolidated top-sections "peek" flow so a previously
+    // collapsed picker still reveals its chips when the user clicks the
+    // pip. Defaults to false so the stacked picker honors localStorage.
+    forceExpanded?: boolean;
+  }
+
+  const { forceExpanded = false }: Props = $props();
+
   const { diff } = getStores();
 
   const patchsets = $derived(diff.getPatchsets());
@@ -25,6 +35,12 @@
   let collapsed = $state(
     typeof localStorage !== "undefined" && localStorage.getItem("pr-patchset-collapsed") === "true",
   );
+  // Effective collapsed state: persisted collapse is overridden by the
+  // peek-flow's forceExpanded prop. The chevron rotation, aria-label,
+  // and title text must reflect what's actually visible — otherwise a
+  // peeked picker shows a "collapsed" chevron over an expanded chip
+  // strip.
+  const effectivelyCollapsed = $derived(collapsed && !forceExpanded);
   function toggleCollapsed(): void {
     collapsed = !collapsed;
     try {
@@ -139,12 +155,12 @@
       type="button"
       class="ps-picker__chevron-btn"
       onclick={toggleCollapsed}
-      aria-label={collapsed ? "Expand patchsets" : "Collapse patchsets"}
-      title={collapsed ? "Expand patchsets" : "Collapse patchsets"}
+      aria-label={effectivelyCollapsed ? "Expand patchsets" : "Collapse patchsets"}
+      title={effectivelyCollapsed ? "Expand patchsets" : "Collapse patchsets"}
     >
       <svg
         class="ps-picker__chevron"
-        class:ps-picker__chevron--collapsed={collapsed}
+        class:ps-picker__chevron--collapsed={effectivelyCollapsed}
         width="10" height="10" viewBox="0 0 10 10" fill="none"
         stroke="currentColor" stroke-width="1.6"
       >
@@ -152,7 +168,7 @@
       </svg>
     </button>
     <span class="ps-picker__label">Patchsets</span>
-    {#if !collapsed}
+    {#if !collapsed || forceExpanded}
       <div class="ps-picker__chips">
         {#each patchsets as p (p.id)}
           {@const isSelected = p.number === selectedNumber}

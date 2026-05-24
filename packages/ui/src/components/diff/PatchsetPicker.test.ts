@@ -18,8 +18,9 @@ function diffStub() {
   };
 }
 
-function renderPicker() {
+function renderPicker(props: Record<string, unknown> = {}) {
   return render(PatchsetPicker, {
+    props,
     context: new Map<symbol, unknown>([[STORES_KEY, { diff: diffStub() }]]),
   });
 }
@@ -49,5 +50,14 @@ describe("PatchsetPicker collapse", () => {
     localStorage.setItem("pr-patchset-collapsed", "true");
     const { container } = renderPicker();
     expect(container.querySelector(".ps-picker__chips")).toBeNull();
+  });
+
+  it("chevron shows expanded state when forceExpanded=true even if pr-patchset-collapsed=true", () => {
+    // Peeking a previously collapsed picker must flip the chevron and
+    // its aria-label so it matches the visible chip strip.
+    localStorage.setItem("pr-patchset-collapsed", "true");
+    const { container } = renderPicker({ forceExpanded: true });
+    expect(container.querySelector(".ps-picker__chevron--collapsed")).toBeNull();
+    expect(screen.getByLabelText(/collapse patchsets/i)).toBeTruthy();
   });
 });
