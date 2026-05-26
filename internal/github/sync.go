@@ -521,13 +521,72 @@ func (s *Syncer) TriggerRun(ctx context.Context) {
 	}
 	merged, cancel := s.mergeWithRunCtx(ctx)
 	s.wg.Add(1)
+	s.reposMu.Lock()
+	repos := make([]RepoRef, len(s.repos))
+	copy(repos, s.repos)
+	s.reposMu.Unlock()
 	s.lifecycleMu.Unlock()
 
 	go func() {
 		defer s.wg.Done()
 		defer cancel()
-		s.runOnce(merged, true)
+		s.runOnce(merged, true, repos)
 	}()
+}
+
+// TriggerRunForRepos kicks off an ad-hoc sync limited to the given
+// repos. Each entry must be in s.repos (case-folded owner+name+host
+// match); any unknown entry causes the call to return an error before
+// starting the goroutine, so callers see "you can't sync that" rather
+// than silently filtering. Empty slice returns nil and is a no-op.
+//
+// Lifecycle matches TriggerRun: lifecycleMu + mergeWithRunCtx +
+// s.wg.Add(1); the spawned goroutine runs runOnce(merged, true, repos)
+// and decrements wg/cancel on return. Hard rate-limit pauses, the
+// caller's ctx deadline, and Stop semantics carry through unchanged.
+func (s *Syncer) TriggerRunForRepos(
+	ctx context.Context,
+	repos []RepoRef,
+) error {
+	if len(repos) == 0 {
+		return nil
+	}
+	for _, r := range repos {
+		host := r.PlatformHost
+		if host == "" {
+			host = "github.com"
+		}
+		if !s.IsTrackedRepoOnHost(r.Owner, r.Name, host) {
+			return fmt.Errorf(
+				"repo %s/%s on %s is not tracked", r.Owner, r.Name, host,
+			)
+		}
+	}
+
+	// Normalize host on every ref so runOnce sees a clean slice.
+	normalized := make([]RepoRef, len(repos))
+	for i, r := range repos {
+		normalized[i] = r
+		if normalized[i].PlatformHost == "" {
+			normalized[i].PlatformHost = "github.com"
+		}
+	}
+
+	s.lifecycleMu.Lock()
+	if s.stopped {
+		s.lifecycleMu.Unlock()
+		return nil
+	}
+	merged, cancel := s.mergeWithRunCtx(ctx)
+	s.wg.Add(1)
+	s.lifecycleMu.Unlock()
+
+	go func() {
+		defer s.wg.Done()
+		defer cancel()
+		s.runOnce(merged, true, normalized)
+	}()
+	return nil
 }
 
 // clientFor returns the Client for the given repo's host.
@@ -1045,12 +1104,17 @@ func (s *Syncer) publishMonotonicProgress(
 // per-host GitHub rate limit and abuse-detection thresholds happy
 // while still capturing most of the wall-clock win on network I/O.
 func (s *Syncer) RunOnce(ctx context.Context) {
-	s.runOnce(ctx, false)
+	s.reposMu.Lock()
+	repos := make([]RepoRef, len(s.repos))
+	copy(repos, s.repos)
+	s.reposMu.Unlock()
+	s.runOnce(ctx, false, repos)
 }
 
 func (s *Syncer) runOnce(
 	ctx context.Context,
 	bypassNextSyncAfter bool,
+	repos []RepoRef,
 ) {
 	if !s.running.CompareAndSwap(false, true) {
 		return
@@ -1061,11 +1125,6 @@ func (s *Syncer) runOnce(
 	// made during background sync. User-initiated server
 	// handler paths do not carry this key and are not counted.
 	ctx = WithSyncBudget(ctx)
-
-	s.reposMu.Lock()
-	repos := make([]RepoRef, len(s.repos))
-	copy(repos, s.repos)
-	s.reposMu.Unlock()
 
 	total := len(repos)
 	s.publishStatus(&SyncStatus{

@@ -5375,3 +5375,115 @@ func TestResolveDisplayName_StaleWhileErrorBacksOff(t *testing.T) {
 	assert.True(ok)
 	assert.Equal(4, callCount)
 }
+
+func TestTriggerRunForReposIteratesOnlyPassedSlice(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	var (
+		mu        sync.Mutex
+		seenRepos = make(map[string]int)
+	)
+	mc := &mockClient{}
+	mc.listOpenPRsFn = func(_ context.Context, owner, repo string) ([]*gh.PullRequest, error) {
+		mu.Lock()
+		seenRepos[owner+"/"+repo]++
+		mu.Unlock()
+		return nil, nil
+	}
+
+	repos := []RepoRef{
+		{Owner: "acme", Name: "alpha", PlatformHost: "github.com"},
+		{Owner: "acme", Name: "beta", PlatformHost: "github.com"},
+	}
+	syncer := NewSyncer(
+		map[string]Client{"github.com": mc},
+		d, nil, repos, time.Minute, nil, testBudget(500),
+	)
+
+	require.NoError(syncer.TriggerRunForRepos(
+		ctx,
+		[]RepoRef{{Owner: "acme", Name: "alpha", PlatformHost: "github.com"}},
+	))
+	syncer.wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.GreaterOrEqual(seenRepos["acme/alpha"], 1, "alpha should have been synced")
+	assert.Zero(seenRepos["acme/beta"], "beta should NOT have been synced")
+}
+
+func TestTriggerRunForReposEmptySliceIsNoOp(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	var (
+		mu        sync.Mutex
+		seenRepos = make(map[string]int)
+	)
+	mc := &mockClient{}
+	mc.listOpenPRsFn = func(_ context.Context, owner, repo string) ([]*gh.PullRequest, error) {
+		mu.Lock()
+		seenRepos[owner+"/"+repo]++
+		mu.Unlock()
+		return nil, nil
+	}
+
+	syncer := NewSyncer(
+		map[string]Client{"github.com": mc},
+		d, nil,
+		[]RepoRef{{Owner: "acme", Name: "alpha", PlatformHost: "github.com"}},
+		time.Minute, nil, testBudget(500),
+	)
+
+	require.NoError(syncer.TriggerRunForRepos(ctx, nil))
+	syncer.wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Zero(seenRepos["acme/alpha"])
+}
+
+func TestTriggerRunForReposRejectsUntrackedRepo(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	var (
+		mu        sync.Mutex
+		seenRepos = make(map[string]int)
+	)
+	mc := &mockClient{}
+	mc.listOpenPRsFn = func(_ context.Context, owner, repo string) ([]*gh.PullRequest, error) {
+		mu.Lock()
+		seenRepos[owner+"/"+repo]++
+		mu.Unlock()
+		return nil, nil
+	}
+
+	syncer := NewSyncer(
+		map[string]Client{"github.com": mc},
+		d, nil,
+		[]RepoRef{{Owner: "acme", Name: "alpha", PlatformHost: "github.com"}},
+		time.Minute, nil, testBudget(500),
+	)
+
+	err := syncer.TriggerRunForRepos(
+		ctx,
+		[]RepoRef{{Owner: "other", Name: "repo", PlatformHost: "github.com"}},
+	)
+	require.Error(err)
+	require.Contains(err.Error(), "not tracked")
+
+	syncer.wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Zero(seenRepos["other/repo"])
+	assert.Zero(seenRepos["acme/alpha"], "tracked repo should also not have been synced")
+}

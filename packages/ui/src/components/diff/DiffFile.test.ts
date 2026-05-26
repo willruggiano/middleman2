@@ -57,9 +57,18 @@ afterAll(() => {
 
 import DiffFile from "./DiffFile.svelte";
 import type { DiffFile as DiffFileType } from "../../api/types.js";
+import type { MiddlemanClient } from "../../types.js";
 import { STORES_KEY } from "../../context.js";
 import { createDiffStore } from "../../stores/diff.svelte.js";
 import { createAIStore } from "../../stores/ai.svelte.js";
+
+function stubClient(): MiddlemanClient {
+  return {
+    GET: vi.fn(async () => ({ data: undefined, error: undefined })),
+    POST: vi.fn(async () => ({ data: undefined, error: undefined })),
+    DELETE: vi.fn(async () => ({ data: undefined, error: undefined })),
+  } as unknown as MiddlemanClient;
+}
 
 function makeFile(overrides: Partial<DiffFileType> = {}): DiffFileType {
   return {
@@ -98,7 +107,7 @@ function renderDiffFile(file: DiffFileType) {
       [
         STORES_KEY,
         {
-          diff: createDiffStore(),
+          diff: createDiffStore({ client: stubClient() }),
           ai: createAIStore(),
           detail: {
             getReviewCommentsByFilePath: () => new Map(),

@@ -7,6 +7,14 @@ import { createAIStore } from "../../stores/ai.svelte.js";
 import { createDetailStore } from "../../stores/detail.svelte.js";
 import type { MiddlemanClient } from "../../types.js";
 
+function stubClient(): MiddlemanClient {
+  return {
+    GET: vi.fn(async () => ({ data: undefined, error: undefined })),
+    POST: vi.fn(async () => ({ data: undefined, error: undefined })),
+    DELETE: vi.fn(async () => ({ data: undefined, error: undefined })),
+  } as unknown as MiddlemanClient;
+}
+
 beforeEach(() => {
   globalThis.fetch = vi.fn(async () => ({
     ok: true,
@@ -31,7 +39,7 @@ function renderView() {
     context: new Map([[
       STORES_KEY,
       {
-        diff: createDiffStore(),
+        diff: createDiffStore({ client: stubClient() }),
         ai: createAIStore(),
         detail: createDetailStore({ client: null as unknown as MiddlemanClient }),
       },

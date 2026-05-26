@@ -3,6 +3,7 @@ import type {
   SyncStatus,
 } from "../api/types.js";
 import type { MiddlemanClient } from "../types.js";
+import { apiErrorMessage } from "../api/errors.js";
 
 export interface SyncStoreOptions {
   client: MiddlemanClient;
@@ -120,9 +121,47 @@ export function createSyncStore(opts: SyncStoreOptions) {
       const { error } = await apiClient.POST("/sync");
       if (error) {
         throw new Error(
-          error.detail ??
-            error.title ??
-            "failed to trigger sync",
+          apiErrorMessage(error, "failed to trigger sync"),
+        );
+      }
+      await refreshSyncStatus();
+    } catch (err) {
+      status = {
+        running: false,
+        last_run_at: previous?.last_run_at ?? "",
+        last_error:
+          err instanceof Error
+            ? err.message
+            : "failed to trigger sync",
+      };
+      wasRunning = false;
+      adjustPollingSpeed(false);
+      throw err;
+    }
+  }
+
+  async function triggerSyncForRepo(
+    owner: string,
+    name: string,
+  ): Promise<void> {
+    const previous = status;
+
+    status = {
+      running: true,
+      last_run_at: previous?.last_run_at ?? "",
+      last_error: "",
+    };
+    wasRunning = true;
+    adjustPollingSpeed(true);
+
+    try {
+      const { error } = await apiClient.POST(
+        "/repos/{owner}/{name}/sync",
+        { params: { path: { owner, name } } },
+      );
+      if (error) {
+        throw new Error(
+          apiErrorMessage(error, "failed to trigger sync"),
         );
       }
       await refreshSyncStatus();
@@ -180,6 +219,7 @@ export function createSyncStore(opts: SyncStoreOptions) {
     refreshSyncStatus,
     setSyncStatus,
     triggerSync,
+    triggerSyncForRepo,
     startPolling,
     stopPolling,
   };

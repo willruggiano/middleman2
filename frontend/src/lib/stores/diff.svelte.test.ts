@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDiffStore } from "@middleman/ui/stores/diff";
 import type { DiffResult, FilesResult } from "@middleman/ui/api/types";
+import type { MiddlemanClient } from "@middleman/ui";
+
+function stubClient(): MiddlemanClient {
+  return {
+    GET: vi.fn(async () => ({ data: undefined, error: undefined })),
+    POST: vi.fn(async () => ({ data: undefined, error: undefined })),
+    DELETE: vi.fn(async () => ({ data: undefined, error: undefined })),
+  } as unknown as MiddlemanClient;
+}
 
 function makeDiffResult(files: string[]): DiffResult {
   return {
@@ -84,7 +93,7 @@ describe("createDiffStore loadDiff", () => {
       },
     );
 
-    const store = createDiffStore({ getBasePath: () => "/" });
+    const store = createDiffStore({ client: stubClient(), getBasePath: () => "/" });
 
     // Load PR A fully.
     await store.loadDiff("owner", "repo", 1);
@@ -157,7 +166,7 @@ describe("createDiffStore loadDiff", () => {
       },
     );
 
-    const store = createDiffStore({ getBasePath: () => "/" });
+    const store = createDiffStore({ client: stubClient(), getBasePath: () => "/" });
 
     // Start loading PR A (will hang).
     void store.loadDiff("owner", "repo", 1);
@@ -195,7 +204,7 @@ describe("createDiffStore loadDiff", () => {
       },
     );
 
-    const store = createDiffStore({ getBasePath: () => "/" });
+    const store = createDiffStore({ client: stubClient(), getBasePath: () => "/" });
     const loadP = store.loadDiff("owner", "repo", 1);
 
     // Wait for /files to fail.
@@ -250,7 +259,7 @@ describe("createDiffStore loadDiff", () => {
 
     // Enable whitespace hiding before loading.
     localStorage.setItem("diff-hide-whitespace", "true");
-    const store = createDiffStore({ getBasePath: () => "/" });
+    const store = createDiffStore({ client: stubClient(), getBasePath: () => "/" });
     const loadP = store.loadDiff("owner", "repo", 1);
 
     // Verify /diff request includes whitespace=hide query param.
@@ -302,7 +311,7 @@ describe("createDiffStore loadDiff", () => {
       },
     );
 
-    const store = createDiffStore({ getBasePath: () => "/" });
+    const store = createDiffStore({ client: stubClient(), getBasePath: () => "/" });
     await store.loadDiff("owner", "repo", 1);
     expect(store.getFileList()?.files).toHaveLength(2);
 
@@ -339,7 +348,7 @@ describe("createDiffStore loadDiff", () => {
       },
     );
 
-    const store = createDiffStore({ getBasePath: () => "/" });
+    const store = createDiffStore({ client: stubClient(), getBasePath: () => "/" });
     await store.loadDiff("owner", "repo", 1);
 
     // /diff failed — sidebar must not show stale /files data.
@@ -373,7 +382,7 @@ describe("createDiffStore loadDiff", () => {
       },
     );
 
-    const store = createDiffStore({ getBasePath: () => "/" });
+    const store = createDiffStore({ client: stubClient(), getBasePath: () => "/" });
     const loadP = store.loadDiff("owner", "repo", 1);
 
     // /diff fails fast, /files still pending — release it.
@@ -410,7 +419,7 @@ describe("createDiffStore loadDiff", () => {
       },
     );
 
-    const store = createDiffStore({ getBasePath: () => "/" });
+    const store = createDiffStore({ client: stubClient(), getBasePath: () => "/" });
     await store.loadDiff("owner", "repo", 1);
 
     // getFileList must return [] not null, even when API sends null.
