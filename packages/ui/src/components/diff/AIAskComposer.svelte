@@ -35,7 +35,18 @@
   let textareaEl: HTMLTextAreaElement | undefined = $state();
 
   $effect(() => {
-    textareaEl?.focus();
+    if (!textareaEl) return;
+    // preventScroll stops the browser from yanking us to wherever
+    // the textarea happens to be in the document — in the rendered
+    // markdown view the composer renders at the bottom of .rmd-view,
+    // not inline with the block, so the default focus-scrolls-into-
+    // view behavior would jump the user to the page bottom.
+    // scrollIntoView(block:"nearest") instead brings the composer
+    // into the visible area only when it's actually off-screen; in
+    // the diff view (where the composer is already inline next to
+    // the line) it's a no-op.
+    textareaEl.focus({ preventScroll: true });
+    textareaEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
   });
 
   function onKeydown(e: KeyboardEvent): void {

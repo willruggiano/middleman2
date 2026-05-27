@@ -27,9 +27,15 @@
   let textareaEl: HTMLTextAreaElement | undefined = $state();
 
   // Focus the textarea as soon as it mounts so the user can type
-  // without an extra click.
+  // without an extra click. preventScroll + scrollIntoView(nearest)
+  // so the page only scrolls if the composer is actually off-screen
+  // — important for the rendered-markdown view where the composer
+  // renders at the bottom of .rmd-view rather than inline with the
+  // block. In the diff view (per-line inline), it's a no-op.
   $effect(() => {
-    textareaEl?.focus();
+    if (!textareaEl) return;
+    textareaEl.focus({ preventScroll: true });
+    textareaEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
   });
 
   function onKeydown(e: KeyboardEvent): void {
