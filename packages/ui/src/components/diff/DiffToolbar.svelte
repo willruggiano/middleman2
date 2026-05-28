@@ -18,6 +18,11 @@
   const draftEvent = $derived(diff.getDraft().event);
   const hiddenCount = $derived(detailStore.getHiddenThreadCount());
   const showingHidden = $derived(detailStore.isShowingHiddenThreads());
+  // Pulled fresh from the store so the toolbar reflects the
+  // currently-selected PR. Empty for local worktrees (which have no
+  // GitHub-side URL) — the link is rendered conditionally so it
+  // doesn't navigate to "" / the current page.
+  const githubURL = $derived(detailStore.getDetail()?.merge_request.URL ?? "");
 </script>
 
 <div class="diff-toolbar">
@@ -97,6 +102,16 @@
       <span class="refresh-error" title={diff.getRefreshError()}>
         {diff.getRefreshError()}
       </span>
+    {/if}
+    {#if githubURL}
+      <a
+        class="gh-link"
+        href={githubURL}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Open this PR on GitHub"
+        aria-label="Open this PR on GitHub"
+      >↗</a>
     {/if}
   </div>
   {#if onReviewClick}
@@ -230,6 +245,27 @@
     font-size: 10px;
     color: var(--accent-red);
     font-style: italic;
+  }
+
+  /* Matches ActivityFeed's .link-btn: muted glyph that picks up
+     accent-blue on hover. The arrow is the same ↗ the activity
+     rows use so reviewers reach for the same affordance in both
+     surfaces. */
+  .gh-link {
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    text-decoration: none;
+  }
+  .gh-link:hover {
+    color: var(--accent-blue);
+    background: var(--bg-surface-hover);
+  }
+  .gh-link:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
   }
 
   .review-btn {
