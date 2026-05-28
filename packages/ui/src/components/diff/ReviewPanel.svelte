@@ -176,6 +176,27 @@
     }
   }
 
+  // Mirrors the submit button's disabled gate so the Cmd/Ctrl+Enter
+  // shortcut doesn't bypass it. Kept as a derived boolean to keep
+  // both call sites in sync if the gate ever evolves.
+  const canSubmit = $derived(
+    !submitting &&
+      !(draft.event === "REQUEST_CHANGES" &&
+        !draft.body.trim() &&
+        draft.comments.length === 0),
+  );
+
+  // Cmd/Ctrl+Enter in the summary textarea submits the review,
+  // matching the inline-comment composer (DiffComposer) and the
+  // AI Ask composer. Plain Enter still inserts a newline so users
+  // can write multi-line summaries.
+  function onSummaryKeydown(e: KeyboardEvent): void {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      if (canSubmit) void onSubmit();
+    }
+  }
+
   // Group pending comments by file for a compact preview list.
   const commentsByPath = $derived.by(() => {
     const map = new Map<string, typeof draft.comments>();
@@ -205,9 +226,10 @@
   <textarea
     class="panel__body-input"
     rows="3"
-    placeholder="Leave a review summary (optional)"
+    placeholder="Leave a review summary (optional). Cmd/Ctrl+Enter to submit."
     value={draft.body}
     oninput={onBodyInput}
+    onkeydown={onSummaryKeydown}
   ></textarea>
 
   <fieldset class="panel__events">
@@ -288,10 +310,7 @@
     <button
       type="button"
       class="panel__btn panel__btn--primary"
-      disabled={submitting ||
-        (draft.event === "REQUEST_CHANGES" &&
-          !draft.body.trim() &&
-          draft.comments.length === 0)}
+      disabled={!canSubmit}
       onclick={() => void onSubmit()}
     >
       {#if isLocal}
