@@ -259,6 +259,7 @@
     </button>
   </header>
 
+  {#if !isLocal}
   <textarea
     class="panel__body-input"
     rows="3"
@@ -304,6 +305,7 @@
       <small>Submit and request changes</small>
     </label>
   </fieldset>
+  {/if}
 
   {#if draft.comments.length > 0}
     <div class="panel__preview">
@@ -355,7 +357,7 @@
       onclick={() => void onSubmit()}
     >
       {#if isLocal}
-        {submitting ? "Sending…" : "Send to Claude"}
+        {submitting ? "Creating…" : "Create review threads"}
       {:else}
         {submitting ? "Publishing…" : "Publish review"}
       {/if}
