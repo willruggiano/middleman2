@@ -4723,8 +4723,13 @@ func TestAPIActivityReturnsUTCCreatedAt(t *testing.T) {
 	client := setupTestClient(t, srv)
 	prID := seedPR(t, database, "acme", "widget", 1)
 	ctx := context.Background()
+	// Anchor to "now" in a non-UTC zone rather than a fixed calendar
+	// date: the activity query filters created_at >= since (here
+	// now-7d), so a hardcoded date silently ages out of the window and
+	// the comment vanishes once wall-clock time advances past it.
+	// Truncate to whole seconds so the RFC3339 round-trip is exact.
 	//nolint:forbidigo // Test fixture intentionally uses a non-UTC timestamp to verify UTC normalization.
-	createdAt := time.Date(2026, 4, 11, 12, 0, 0, 0, time.FixedZone("EDT", -4*60*60))
+	createdAt := time.Now().Add(-time.Hour).Truncate(time.Second).In(time.FixedZone("EDT", -4*60*60))
 
 	require.NoError(database.UpsertMREvents(ctx, []db.MREvent{{
 		MergeRequestID: prID,
