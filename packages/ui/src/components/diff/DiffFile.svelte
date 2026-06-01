@@ -1140,6 +1140,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    /* Selectable even though it sits inside the collapse button, so the
+       path can be copied; a drag selects, a plain click still toggles. */
+    user-select: text;
   }
 
   .file-path--deleted {
