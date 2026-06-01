@@ -12,6 +12,8 @@
 
   let expanded = $state(false);
   let userCollapsed = $state(false);
+  let activeId = $state<number | null>(null);
+  let confirmingDeleteId = $state<number | null>(null);
   $effect(() => {
     if (threads.length > 0 && !userCollapsed) expanded = true;
   });
@@ -27,15 +29,11 @@
     }
     return `${sign}${t.line}`;
   }
-  function rootBody(t: ReviewThread): string {
-    return t.comments?.[0]?.body ?? "";
-  }
-  function truncate(s: string, n: number): string {
-    return s.length <= n ? s : s.slice(0, n).trimEnd() + "…";
-  }
   function scrollToThread(t: ReviewThread): void {
+    const path =
+      typeof CSS !== "undefined" && CSS.escape ? CSS.escape(t.path) : t.path;
     const selector =
-      `.diff-file[data-file-path="${CSS.escape(t.path)}"] ` +
+      `.diff-file[data-file-path="${path}"] ` +
       `.line-wrap[data-anchor-line="${t.line}"]` +
       `[data-anchor-side="${t.side}"]`;
     const el = document.querySelector<HTMLElement>(selector);
@@ -44,6 +42,21 @@
   async function onApplyAll(): Promise<void> {
     if (busy) return;
     await reviewThreads.applyAll();
+  }
+  function selectThread(t: ReviewThread): void {
+    activeId = t.id;
+    scrollToThread(t);
+  }
+  // Two-step delete so a stale/unreachable thread (whose anchor moved off
+  // the current diff, leaving no inline card) can be cleared from here:
+  // the first click arms, the second confirms.
+  async function onDeleteRow(t: ReviewThread): Promise<void> {
+    if (confirmingDeleteId !== t.id) {
+      confirmingDeleteId = t.id;
+      return;
+    }
+    confirmingDeleteId = null;
+    await reviewThreads.deleteThread(t.id);
   }
 </script>
 
@@ -69,18 +82,33 @@
     {#if expanded}
       <div class="threads-section__body">
         {#each threads as t (t.id)}
-          <button
-            type="button"
-            class="thread-item"
-            onclick={() => scrollToThread(t)}
-            title="Scroll to this thread in the diff"
-          >
-            <span class="thread-item__anchor">{anchorLabel(t)}</span>
-            <span class="thread-item__status">{t.status}</span>
-            <span class="thread-item__path">{t.path}</span>
-            <span class="thread-item__preview">{truncate(rootBody(t), 80)}</span>
-            <span class="thread-item__count" title="comments">{(t.comments ?? []).length}c</span>
-          </button>
+          <div class="thread-item-row" class:thread-item-row--active={activeId === t.id}>
+            <button
+              type="button"
+              class="thread-item"
+              title={t.path}
+              onclick={() => selectThread(t)}
+            >
+              <span
+                class="thread-item__dot thread-item__dot--{t.status}"
+                title={t.status}
+              ></span>
+              <span class="thread-item__anchor">{anchorLabel(t)}</span>
+              <span class="thread-item__path">{t.path}</span>
+              <span class="thread-item__count" title="comments">{(t.comments ?? []).length}c</span>
+            </button>
+            <button
+              type="button"
+              class="thread-item__delete"
+              class:thread-item__delete--armed={confirmingDeleteId === t.id}
+              title={confirmingDeleteId === t.id ? "Click again to delete" : "Delete this thread"}
+              onclick={() => void onDeleteRow(t)}
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                <path d="M3 4h10M6 4V3h4v1M5 4l.5 9h5l.5-9" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+          </div>
         {/each}
       </div>
     {/if}
@@ -157,19 +185,39 @@
     max-height: 40vh;
     overflow-y: auto;
   }
+  .thread-item-row {
+    display: flex;
+    align-items: center;
+    border-left: 2px solid transparent;
+  }
+  .thread-item-row:hover { background: var(--bg-surface-hover); }
+  .thread-item-row--active {
+    border-left-color: var(--accent-blue);
+    background: color-mix(in srgb, var(--accent-blue) 8%, transparent);
+  }
   .thread-item {
     display: flex;
     align-items: center;
     gap: 6px;
-    width: 100%;
-    padding: 4px 10px 4px 12px;
+    flex: 1;
+    min-width: 0;
+    padding: 4px 4px 4px 8px;
     border: none;
     background: none;
     text-align: left;
     cursor: pointer;
     color: inherit;
   }
-  .thread-item:hover { background: var(--bg-surface-hover); }
+  .thread-item__dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--text-muted);
+  }
+  .thread-item__dot--discussed { background: var(--accent-blue); }
+  .thread-item__dot--applied { background: var(--accent-green); }
+  .thread-item__dot--resolved { background: var(--text-muted); opacity: 0.4; }
   .thread-item__anchor {
     font-family: var(--font-mono);
     font-size: 10px;
@@ -179,27 +227,10 @@
     border-radius: 999px;
     flex-shrink: 0;
   }
-  .thread-item__status {
-    font-size: 10px;
-    color: var(--text-muted);
-    border: 1px solid var(--border-muted);
-    border-radius: var(--radius-sm);
-    padding: 1px 6px;
-    flex-shrink: 0;
-  }
   .thread-item__path {
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 0 1 auto;
-    min-width: 0;
-  }
-  .thread-item__preview {
-    font-size: 11px;
-    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -212,4 +243,22 @@
     color: var(--text-muted);
     flex-shrink: 0;
   }
+  .thread-item__delete {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin-right: 6px;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    opacity: 0;
+    flex-shrink: 0;
+  }
+  .thread-item-row:hover .thread-item__delete { opacity: 1; }
+  .thread-item__delete:hover { color: var(--accent-red); background: var(--bg-inset); }
+  .thread-item__delete--armed { opacity: 1; color: var(--accent-red); }
 </style>
