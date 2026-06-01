@@ -156,7 +156,12 @@
         {/if}
       </strong>
       <span class="interdiff-banner__detail">
-        Showing the raw diff between patchset heads.{interdiff.reason ? ` (${interdiff.reason})` : ""}
+        {#if interdiff.kind === "conflicted"}
+          Showing only files the author touched in the new patchset. The diff
+          for each may still include changes from the rebase itself.
+        {:else}
+          Showing the raw diff between patchset heads.{interdiff.reason ? ` (${interdiff.reason})` : ""}
+        {/if}
       </span>
     </div>
   {/if}

@@ -287,6 +287,74 @@ func TestInterdiff_ConflictFallsBack(t *testing.T) {
 	assert.NotEmpty(res.Diff)
 }
 
+// When the conflict-fallback structured path fires, we filter the
+// fallback diff to files the author touched in the new patchset
+// (i.e., paths in newBase..newHead). Files that appear in
+// oldHead..newHead only because the rebase moved them — but that
+// the author didn't touch — must drop out.
+func TestInterdiff_ConflictFallback_StructuredFiltersToAuthorTouchedFiles(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	s, base := initScenario(t)
+
+	// PS1: author edits base.txt on a fresh branch.
+	commitTestRun(t, s.work, "git", "checkout", "-b", "pr", base)
+	require.NoError(os.WriteFile(filepath.Join(s.work, "base.txt"), []byte("pr edit\n"), 0o644))
+	commitTestRun(t, s.work, "git", "add", ".")
+	commitTestRun(t, s.work, "git", "commit", "-m", "pr edits base")
+	oldHead := mainHead(t, s.work)
+	oldBase := base
+	commitTestRun(t, s.work, "git", "push", "origin", "pr")
+
+	// Main advances: edits base.txt a conflicting way AND adds
+	// extra.txt. extra.txt is the pure rebase-noise file we expect
+	// the filter to drop.
+	checkout(t, s.work, "main")
+	require.NoError(os.WriteFile(filepath.Join(s.work, "base.txt"), []byte("main edit\n"), 0o644))
+	require.NoError(os.WriteFile(filepath.Join(s.work, "extra.txt"), []byte("extra\n"), 0o644))
+	commitTestRun(t, s.work, "git", "add", ".")
+	commitTestRun(t, s.work, "git", "commit", "-m", "main edits base + extra")
+	commitTestRun(t, s.work, "git", "push", "origin", "main")
+	newBase := mainHead(t, s.work)
+
+	// Author rebases pr onto main, resolves the base.txt conflict
+	// by keeping their version, then adds a new commit touching
+	// pr-extra.txt. pr-extra.txt is the file we expect to survive
+	// the filter.
+	checkout(t, s.work, "pr")
+	runGitAllowFail(t, s.work, "rebase", "main")
+	require.NoError(os.WriteFile(filepath.Join(s.work, "base.txt"), []byte("pr edit\n"), 0o644))
+	commitTestRun(t, s.work, "git", "add", ".")
+	cmd := exec.Command("git", "rebase", "--continue")
+	cmd.Dir = s.work
+	cmd.Env = append(gitenv.StripAll(os.Environ()),
+		"GIT_CONFIG_GLOBAL="+os.DevNull,
+		"GIT_CONFIG_SYSTEM="+os.DevNull,
+		"GIT_EDITOR=true",
+	)
+	out, err := cmd.CombinedOutput()
+	require.NoError(err, "rebase --continue failed: %s", out)
+	writeAndCommit(t, s.work, "pr-extra.txt", "pr extra\n", "pr adds pr-extra in PS2")
+	newHead := mainHead(t, s.work)
+	commitTestRun(t, s.work, "git", "push", "--force", "origin", "pr")
+
+	si, err := s.mgr.InterdiffPatchsetsStructured(
+		context.Background(), s.host, s.owner, s.name,
+		oldHead, oldBase, newHead, newBase,
+		false,
+	)
+	require.NoError(err)
+	require.Equal(InterdiffConflicted, si.Kind, "reason: %s", si.Reason)
+
+	require.NotNil(si.Result)
+	paths := make(map[string]bool, len(si.Result.Files))
+	for _, f := range si.Result.Files {
+		paths[f.Path] = true
+	}
+	assert.True(paths["pr-extra.txt"], "author-touched file must survive the filter; got %+v", paths)
+	assert.False(paths["extra.txt"], "rebase-only file must be filtered out; got %+v", paths)
+}
+
 // Case 6 — Force-push to unrelated history. oldHead and newHead
 // share no relevant ancestry; cherry-pick will fail and we fall
 // back to raw diff with conflicted (or unrelated) kind.

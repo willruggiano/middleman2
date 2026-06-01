@@ -199,10 +199,20 @@ func (m *Manager) InterdiffPatchsetsStructured(
 		if dErr != nil {
 			return StructuredInterdiff{}, fmt.Errorf("interdiff: conflict and raw diff failed: %w", dErr)
 		}
+		filtered, fErr := m.filterToAuthorTouchedFiles(ctx, host, cloneDir, res, newBase, newHead)
+		if fErr != nil {
+			// Filter is best-effort; on failure surface the unfiltered
+			// fallback so the reviewer still gets something to look at.
+			return StructuredInterdiff{
+				Result: res,
+				Kind:   InterdiffConflicted,
+				Reason: "merge of old patchset onto new base had conflicts; rebase-noise filter unavailable",
+			}, nil
+		}
 		return StructuredInterdiff{
-			Result: res,
+			Result: filtered,
 			Kind:   InterdiffConflicted,
-			Reason: "merge of old patchset onto new base had conflicts",
+			Reason: "merge of old patchset onto new base had conflicts; showing only files the author touched in the new patchset (the diff for each may still include changes from the rebase)",
 		}, nil
 	}
 
@@ -211,6 +221,53 @@ func (m *Manager) InterdiffPatchsetsStructured(
 		return StructuredInterdiff{}, fmt.Errorf("interdiff: structured synthetic diff: %w", err)
 	}
 	return StructuredInterdiff{Result: res, Kind: InterdiffClean}, nil
+}
+
+// filterToAuthorTouchedFiles trims `res` to only those files that
+// appear in `newBase..newHead` — i.e., files the author changed in
+// the new patchset. Used by the conflict fallback so pure rebase-
+// noise files (moved by the rebase but never touched by the author)
+// don't clutter the displayed diff.
+//
+// Renames are handled via both Path and OldPath: a renamed file
+// matches if either name is in the author-touched set.
+func (m *Manager) filterToAuthorTouchedFiles(
+	ctx context.Context, host, cloneDir string,
+	res *DiffResult, newBase, newHead string,
+) (*DiffResult, error) {
+	if res == nil {
+		return &DiffResult{Files: []DiffFile{}}, nil
+	}
+	if newBase == "" || newHead == "" || newBase == newHead {
+		return res, nil
+	}
+	out, err := m.git(ctx, host, cloneDir,
+		"diff", "--name-only", "-M", "-C", newBase, newHead)
+	if err != nil {
+		return nil, fmt.Errorf("list author-touched files %s..%s: %w", newBase, newHead, err)
+	}
+	touched := make(map[string]struct{})
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			touched[line] = struct{}{}
+		}
+	}
+	kept := make([]DiffFile, 0, len(res.Files))
+	for _, f := range res.Files {
+		if _, ok := touched[f.Path]; ok {
+			kept = append(kept, f)
+			continue
+		}
+		if f.OldPath != "" {
+			if _, ok := touched[f.OldPath]; ok {
+				kept = append(kept, f)
+			}
+		}
+	}
+	filtered := *res
+	filtered.Files = kept
+	return &filtered, nil
 }
 
 // mergeTreeReplay runs an in-memory 3-way merge of (newBase, oldHead)
