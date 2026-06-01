@@ -29,7 +29,7 @@ func BranchHeads(ctx context.Context, worktreePath, excludeBranch string) (map[s
 		return nil, fmt.Errorf("git for-each-ref: %w", err)
 	}
 	heads := make(map[string][]string)
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		if line == "" {
 			continue
 		}

@@ -247,7 +247,7 @@ func (m *Manager) filterToAuthorTouchedFiles(
 		return nil, fmt.Errorf("list author-touched files %s..%s: %w", newBase, newHead, err)
 	}
 	touched := make(map[string]struct{})
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			touched[line] = struct{}{}
