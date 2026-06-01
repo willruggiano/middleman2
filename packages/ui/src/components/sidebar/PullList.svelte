@@ -245,6 +245,12 @@
 
   let authorPopoverOpen = $state(false);
   const authorFilterActive = $derived(pulls.getFilterAuthors().length > 0);
+  // True when ANY filter in the popover is engaged — used to light up
+  // the button itself even if only the Reviewers toggle is on (no
+  // authors selected).
+  const popoverFilterActive = $derived(
+    authorFilterActive || pulls.getFilterMyReviews(),
+  );
 
   // Review-state tally for the visible PR list. Only counts open PRs;
   // closed/merged ones don't have an actionable review state.
@@ -429,21 +435,6 @@
       />
     </div>
     <button
-      class="my-reviews-btn"
-      class:my-reviews-btn--active={pulls.getFilterMyReviews()}
-      onclick={() => pulls.setFilterMyReviews(!pulls.getFilterMyReviews())}
-      title={pulls.getFilterMyReviews()
-        ? "Showing only PRs where you're a reviewer — click to show all"
-        : "Show only PRs where you're a reviewer"}
-      aria-pressed={pulls.getFilterMyReviews()}
-    >
-      <svg width="12" height="12" viewBox="0 0 16 16" fill="none"
-        stroke="currentColor" stroke-width="1.5">
-        <circle cx="8" cy="5" r="3" />
-        <path d="M2 14c0-3 2.5-5 6-5s6 2 6 5" stroke-linecap="round" />
-      </svg>
-    </button>
-    <button
       class="star-filter-btn"
       class:star-filter-btn--active={pulls.getFilterStarred()}
       onclick={() => { pulls.setFilterStarred(!pulls.getFilterStarred()); void pulls.loadPulls(); }}
@@ -462,11 +453,13 @@
     <div class="author-filter-wrap">
       <button
         class="author-filter-btn"
-        class:author-filter-btn--active={authorFilterActive}
+        class:author-filter-btn--active={popoverFilterActive}
         onclick={toggleAuthorPopover}
         title={authorFilterActive
           ? `Filtering: ${pulls.getFilterAuthors().join(", ")}`
-          : "Filter by author"}
+          : pulls.getFilterMyReviews()
+            ? "Filtering to PRs where you're a reviewer"
+            : "Filter by author or reviewer"}
       >
         <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
           <path d="M10.561 8.073a6.005 6.005 0 0 1 3.432 5.142.75.75 0 1 1-1.498.07 4.5 4.5 0 0 0-8.99 0 .75.75 0 0 1-1.498-.07 6.004 6.004 0 0 1 3.431-5.142 3.999 3.999 0 1 1 5.123 0zM10.5 5a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0z" />
@@ -547,6 +540,25 @@
             {/each}
             <div class="author-popover__divider"></div>
           {/if}
+
+          <div class="author-popover__section-head">Reviewers</div>
+          <button
+            class="author-popover__item"
+            class:author-popover__item--active={!pulls.getFilterMyReviews()}
+            onclick={() => pulls.setFilterMyReviews(false)}
+          >
+            <span class="author-popover__check">{!pulls.getFilterMyReviews() ? "✓" : ""}</span>
+            <span class="author-popover__name">No filter</span>
+          </button>
+          <button
+            class="author-popover__item"
+            class:author-popover__item--active={pulls.getFilterMyReviews()}
+            onclick={() => pulls.setFilterMyReviews(true)}
+          >
+            <span class="author-popover__check">{pulls.getFilterMyReviews() ? "✓" : ""}</span>
+            <span class="author-popover__name">Me</span>
+          </button>
+          <div class="author-popover__divider"></div>
 
           <div class="author-popover__section-head">Authors</div>
           {#each pulls.getAvailableAuthors() as author (author)}
@@ -833,28 +845,6 @@
     color: var(--accent-amber);
   }
 
-  /* Same shape as the star button so they sit nicely next to each
-     other; uses the blue accent so the two toggles read as
-     independent filters rather than two flavours of the same one. */
-  .my-reviews-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 26px;
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: color 0.1s, background 0.1s;
-  }
-  .my-reviews-btn:hover {
-    color: var(--accent-blue);
-    background: var(--bg-surface-hover);
-  }
-  .my-reviews-btn--active {
-    color: var(--accent-blue);
-  }
 
   .author-filter-wrap {
     position: relative;
