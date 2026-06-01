@@ -922,14 +922,24 @@ type ReviewThreadCommentResponse struct {
 // ReviewThreadDraft defines model for ReviewThreadDraft.
 type ReviewThreadDraft struct {
 	// Body the reviewer's root comment
-	Body      string `json:"body"`
-	CommitSha string `json:"commit_sha"`
-	Line      int64  `json:"line"`
-	Path      string `json:"path"`
+	Body string `json:"body"`
+
+	// Comments additional comments appended after the root, in order
+	Comments  *[]ReviewThreadDraftComment `json:"comments,omitempty"`
+	CommitSha string                      `json:"commit_sha"`
+	Line      int64                       `json:"line"`
+	Path      string                      `json:"path"`
 
 	// Side LEFT | RIGHT
 	Side      string `json:"side"`
 	StartLine *int64 `json:"start_line,omitempty"`
+}
+
+// ReviewThreadDraftComment defines model for ReviewThreadDraftComment.
+type ReviewThreadDraftComment struct {
+	// Author user | agent
+	Author string `json:"author"`
+	Body   string `json:"body"`
 }
 
 // ReviewThreadResponse defines model for ReviewThreadResponse.

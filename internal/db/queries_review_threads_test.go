@@ -87,6 +87,61 @@ func TestCreateAndListReviewThreads(t *testing.T) {
 	assert.Equal("b.go", listed[1].Path)
 }
 
+func TestCreateReviewThreadAppendsCommentsInOrder(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+	mrID := insertTestMRLocal(t, d)
+
+	created, err := d.CreateReviewThreads(ctx, mrID, []NewReviewThread{{
+		Path: "a.go", Side: "RIGHT", Line: 12, CommitSHA: "abc", Body: "why unbounded?",
+		Comments: []NewReviewThreadComment{
+			{Author: "agent", Body: "bounded by ctx deadline"},
+			{Author: "user", Body: "cap attempts too?"},
+			{Author: "agent", Body: "add maxAttempts"},
+		},
+	}})
+	require.NoError(err)
+	require.Len(created, 1)
+
+	// Root 'user' comment followed by the three appended comments, in order.
+	got, err := d.ListReviewThreadComments(ctx, created[0].ID)
+	require.NoError(err)
+	require.Len(got, 4)
+	assert.Equal("user", got[0].Author)
+	assert.Equal("why unbounded?", got[0].Body)
+	assert.Equal("agent", got[1].Author)
+	assert.Equal("bounded by ctx deadline", got[1].Body)
+	assert.Equal("user", got[2].Author)
+	assert.Equal("cap attempts too?", got[2].Body)
+	assert.Equal("agent", got[3].Author)
+	assert.Equal("add maxAttempts", got[3].Body)
+
+	// A thread carrying any agent comment is created as 'discussed'.
+	assert.Equal("discussed", created[0].Status)
+}
+
+func TestCreateReviewThreadUserOnlyCommentsStaysOpen(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	d := openTestDB(t)
+	ctx := context.Background()
+	mrID := insertTestMRLocal(t, d)
+
+	created, err := d.CreateReviewThreads(ctx, mrID, []NewReviewThread{{
+		Path: "a.go", Side: "RIGHT", Line: 1, CommitSHA: "abc", Body: "note",
+		Comments: []NewReviewThreadComment{{Author: "user", Body: "follow-up note"}},
+	}})
+	require.NoError(err)
+	require.Len(created, 1)
+	assert.Equal("open", created[0].Status)
+
+	got, err := d.ListReviewThreadComments(ctx, created[0].ID)
+	require.NoError(err)
+	require.Len(got, 2)
+}
+
 func TestReviewThreadCommentsAndState(t *testing.T) {
 	require := require.New(t)
 	assert := Assert.New(t)

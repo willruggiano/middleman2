@@ -2268,6 +2268,8 @@ export interface components {
         ReviewThreadDraft: {
             /** @description the reviewer's root comment */
             body: string;
+            /** @description additional comments appended after the root, in order */
+            comments?: components["schemas"]["ReviewThreadDraftComment"][] | null;
             commit_sha: string;
             /** Format: int64 */
             line: number;
@@ -2276,6 +2278,11 @@ export interface components {
             side: string;
             /** Format: int64 */
             start_line?: number;
+        };
+        ReviewThreadDraftComment: {
+            /** @description user | agent */
+            author: string;
+            body: string;
         };
         ReviewThreadResponse: {
             /**

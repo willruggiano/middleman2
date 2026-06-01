@@ -39,7 +39,7 @@ type ReviewThreadComment struct {
 
 // NewReviewThread describes a thread anchor plus the reviewer's root
 // comment. CreateReviewThreads inserts the thread and its first
-// ('user') comment together.
+// ('user') comment together, followed by any Comments in order.
 type NewReviewThread struct {
 	Path      string
 	Side      string
@@ -47,6 +47,17 @@ type NewReviewThread struct {
 	StartLine *int
 	CommitSHA string
 	Body      string // the reviewer's root comment
+	// Comments are extra authored comments appended after the root,
+	// in order. Used when promoting an Ask-Claude session, whose Q&A
+	// turns become alternating user/agent comments.
+	Comments []NewReviewThreadComment
+}
+
+// NewReviewThreadComment is one extra comment appended after a thread's
+// root comment at creation time.
+type NewReviewThreadComment struct {
+	Author string // "user" | "agent"
+	Body   string
 }
 
 // CreateReviewThreads inserts a batch of threads on the unscoped ('')
@@ -86,6 +97,30 @@ func (d *DB) CreateReviewThreadsOnBranch(ctx context.Context, mrID int64, branch
 			threadID, t.Body,
 		); err != nil {
 			return nil, fmt.Errorf("insert root comment: %w", err)
+		}
+		// Append any extra authored comments in order. A thread that
+		// carries an agent comment (e.g. a promoted Ask-Claude session)
+		// is created as 'discussed' since it already holds agent input.
+		hasAgent := false
+		for _, c := range t.Comments {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO middleman_review_thread_comments (thread_id, author, body)
+				VALUES (?, ?, ?)`,
+				threadID, c.Author, c.Body,
+			); err != nil {
+				return nil, fmt.Errorf("insert appended comment: %w", err)
+			}
+			if c.Author == "agent" {
+				hasAgent = true
+			}
+		}
+		if hasAgent {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE middleman_review_threads SET status = 'discussed' WHERE id = ?`,
+				threadID,
+			); err != nil {
+				return nil, fmt.Errorf("set discussed status: %w", err)
+			}
 		}
 		ids = append(ids, threadID)
 	}

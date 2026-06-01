@@ -57,13 +57,22 @@ type listReviewThreadsOutput struct {
 // anchor (path/side/line[/start_line]/commit) plus the reviewer's root
 // comment body. Named (not anonymous) so the generated client exposes a
 // meaningful type rather than the auto-named "Item".
+// reviewThreadDraftComment is one extra authored comment appended after a
+// draft's root body, in order. Used when promoting an Ask-Claude session
+// whose Q&A turns become alternating user/agent comments.
+type reviewThreadDraftComment struct {
+	Author string `json:"author" doc:"user | agent"`
+	Body   string `json:"body"`
+}
+
 type reviewThreadDraft struct {
-	Path      string `json:"path"`
-	Side      string `json:"side" doc:"LEFT | RIGHT"`
-	Line      int    `json:"line"`
-	StartLine *int   `json:"start_line,omitempty"`
-	CommitSHA string `json:"commit_sha"`
-	Body      string `json:"body" doc:"the reviewer's root comment"`
+	Path      string                     `json:"path"`
+	Side      string                     `json:"side" doc:"LEFT | RIGHT"`
+	Line      int                        `json:"line"`
+	StartLine *int                       `json:"start_line,omitempty"`
+	CommitSHA string                     `json:"commit_sha"`
+	Body      string                     `json:"body" doc:"the reviewer's root comment"`
+	Comments  []reviewThreadDraftComment `json:"comments,omitempty" doc:"additional comments appended after the root, in order"`
 }
 
 type createReviewThreadsInput struct {
@@ -235,9 +244,23 @@ func (s *Server) createReviewThreads(ctx context.Context, input *createReviewThr
 		if t.Body == "" {
 			return nil, huma.Error400BadRequest("each thread needs a comment body")
 		}
+		var comments []db.NewReviewThreadComment
+		if len(t.Comments) > 0 {
+			comments = make([]db.NewReviewThreadComment, 0, len(t.Comments))
+			for _, c := range t.Comments {
+				if c.Author != "user" && c.Author != "agent" {
+					return nil, huma.Error400BadRequest("comment author must be user or agent")
+				}
+				if c.Body == "" {
+					return nil, huma.Error400BadRequest("each appended comment needs a body")
+				}
+				comments = append(comments, db.NewReviewThreadComment{Author: c.Author, Body: c.Body})
+			}
+		}
 		in = append(in, db.NewReviewThread{
 			Path: t.Path, Side: t.Side, Line: t.Line,
 			StartLine: t.StartLine, CommitSHA: t.CommitSHA, Body: t.Body,
+			Comments: comments,
 		})
 	}
 	created, err := s.db.CreateReviewThreadsOnBranch(ctx, mrID, branch, in)

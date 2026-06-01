@@ -115,6 +115,71 @@ func TestAPIReviewThreadsLifecycle(t *testing.T) {
 	assert.Equal("resolved", resolveResp.JSON200.Status)
 }
 
+func TestAPIReviewThreadsCreateWithAppendedComments(t *testing.T) {
+	require := require.New(t)
+	assert := Assert.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	num := seedReviewWorktree(t, database)
+
+	createResp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Threads: &[]generated.ReviewThreadDraft{{
+				Path: "a.go", Side: "RIGHT", Line: 12, CommitSha: "abc", Body: "why unbounded?",
+				Comments: &[]generated.ReviewThreadDraftComment{
+					{Author: "agent", Body: "bounded by ctx deadline"},
+					{Author: "user", Body: "cap attempts too?"},
+					{Author: "agent", Body: "add maxAttempts"},
+				},
+			}},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusOK, createResp.StatusCode())
+	require.NotNil(createResp.JSON200)
+	require.NotNil(createResp.JSON200.Threads)
+	created := *createResp.JSON200.Threads
+	require.Len(created, 1)
+
+	// Root 'user' comment followed by the appended comments, in order.
+	require.NotNil(created[0].Comments)
+	cs := *created[0].Comments
+	require.Len(cs, 4)
+	assert.Equal("user", cs[0].Author)
+	assert.Equal("why unbounded?", cs[0].Body)
+	assert.Equal("agent", cs[1].Author)
+	assert.Equal("bounded by ctx deadline", cs[1].Body)
+	assert.Equal("user", cs[2].Author)
+	assert.Equal("cap attempts too?", cs[2].Body)
+	assert.Equal("agent", cs[3].Author)
+	assert.Equal("add maxAttempts", cs[3].Body)
+
+	// A promoted thread carries agent input, so it is created 'discussed'.
+	assert.Equal("discussed", created[0].Status)
+}
+
+func TestAPIReviewThreadsCreateRejectsBadCommentAuthor(t *testing.T) {
+	require := require.New(t)
+	srv, database := setupTestServer(t)
+	client := setupTestClient(t, srv)
+	ctx := context.Background()
+	num := seedReviewWorktree(t, database)
+
+	resp, err := client.HTTP.PostReposByOwnerByNamePullsByNumberReviewThreadsWithResponse(
+		ctx, "local", "demo", num,
+		generated.CreateReviewThreadsInputBody{
+			Threads: &[]generated.ReviewThreadDraft{{
+				Path: "a.go", Side: "RIGHT", Line: 1, CommitSha: "abc", Body: "root",
+				Comments: &[]generated.ReviewThreadDraftComment{{Author: "bot", Body: "nope"}},
+			}},
+		},
+	)
+	require.NoError(err)
+	require.Equal(http.StatusBadRequest, resp.StatusCode())
+}
+
 func TestAPIReviewThreadsRejectNonLocal(t *testing.T) {
 	require := require.New(t)
 	srv, _ := setupTestServer(t)
