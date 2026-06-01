@@ -15,6 +15,9 @@ export interface ReviewThreadDraftInput {
   startLine?: number;
   commitSha: string;
   body: string;
+  // Extra authored comments appended after the root, in order (e.g. a
+  // promoted Ask-Claude session's Q&A turns).
+  comments?: { author: "user" | "agent"; body: string }[];
 }
 
 export interface ReviewThreadsStoreOptions {
@@ -113,6 +116,7 @@ export function createReviewThreadsStore(opts: ReviewThreadsStoreOptions) {
               ...(d.startLine != null ? { start_line: d.startLine } : {}),
               commit_sha: d.commitSha,
               body: d.body,
+              ...(d.comments ? { comments: d.comments } : {}),
             })),
           },
         },

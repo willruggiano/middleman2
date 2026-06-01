@@ -108,6 +108,38 @@ describe("reviewThreads store", () => {
     );
   });
 
+  it("createThreads forwards appended comments per draft", async () => {
+    const post = vi.fn(async () => ({ data: { threads: [thread()] }, error: undefined }));
+    const store = createReviewThreadsStore({ client: stubClient({ POST: post }) });
+    await store.load("local", "demo", 7);
+    await store.createThreads(
+      [{
+        path: "a.go", side: "RIGHT", line: 12, commitSha: "abc", body: "q1",
+        comments: [
+          { author: "agent", body: "a1" },
+          { author: "user", body: "q2" },
+        ],
+      }],
+      "act-immediately",
+    );
+    expect(post).toHaveBeenCalledWith(
+      "/repos/{owner}/{name}/pulls/{number}/review-threads",
+      {
+        params: { path: { owner: "local", name: "demo", number: 7 } },
+        body: {
+          mode: "act-immediately",
+          threads: [{
+            path: "a.go", side: "RIGHT", line: 12, commit_sha: "abc", body: "q1",
+            comments: [
+              { author: "agent", body: "a1" },
+              { author: "user", body: "q2" },
+            ],
+          }],
+        },
+      },
+    );
+  });
+
   it("apply posts to the apply endpoint and replaces state", async () => {
     const post = vi.fn(async () => ({ data: { threads: [thread({ status: "applied" })] }, error: undefined }));
     const store = createReviewThreadsStore({ client: stubClient({ POST: post }) });
