@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, fireEvent } from "@testing-library/svelte";
+import { cleanup, render, fireEvent, waitFor } from "@testing-library/svelte";
 
 const createThreads = vi.fn(async () => true);
+const deleteThread = vi.fn(async () => true);
 // Mutable so each test can set the session's questions before render.
 const state: { questions: Record<string, unknown>[] } = { questions: [] };
 
@@ -10,7 +11,7 @@ vi.mock("../../context.js", () => ({
     ai: {
       getQuestionsForThread: () => state.questions,
       addFollowUp: vi.fn(),
-      deleteThread: vi.fn(),
+      deleteThread,
       deleteQuestion: vi.fn(),
       getError: () => null,
     },
@@ -38,38 +39,27 @@ afterEach(() => {
 });
 
 describe("AIThreadCard promote-to-review-thread (local)", () => {
-  it("promotes the whole session, agent engaged by default", async () => {
+  it("promotes the whole session to a persisted thread and removes the AI thread", async () => {
     state.questions = [
       done(1, "why unbounded?", "bounded by ctx"),
       done(2, "cap attempts?", "add maxAttempts"),
     ];
-    const { getByText, getByRole } = render(AIThreadCard, {
+    const { getByText } = render(AIThreadCard, {
       props: { thread, repoOwner: "local", repoName: "demo" },
     });
-    expect((getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
     await fireEvent.click(getByText("Promote to review thread"));
-    expect(createThreads).toHaveBeenCalledWith(
-      [{
-        path: "a.go", side: "RIGHT", line: 12, startLine: 10, commitSha: "abc123",
-        body: "why unbounded?",
-        comments: [
-          { author: "agent", body: "bounded by ctx" },
-          { author: "user", body: "cap attempts?" },
-          { author: "agent", body: "add maxAttempts" },
-        ],
-      }],
-      "act-immediately",
-    );
-  });
-
-  it("promotes persist-only when the agent checkbox is unticked", async () => {
-    state.questions = [done(1, "why unbounded?", "bounded by ctx")];
-    const { getByText, getByRole } = render(AIThreadCard, {
-      props: { thread, repoOwner: "local", repoName: "demo" },
-    });
-    await fireEvent.click(getByRole("checkbox"));
-    await fireEvent.click(getByText("Promote to review thread"));
-    expect(createThreads).toHaveBeenCalledWith(expect.any(Array), undefined);
+    // Persist-only: createThreads is called with no mode argument.
+    expect(createThreads).toHaveBeenCalledWith([{
+      path: "a.go", side: "RIGHT", line: 12, startLine: 10, commitSha: "abc123",
+      body: "why unbounded?",
+      comments: [
+        { author: "agent", body: "bounded by ctx" },
+        { author: "user", body: "cap attempts?" },
+        { author: "agent", body: "add maxAttempts" },
+      ],
+    }]);
+    // The Q&A thread is removed once it's been captured as a review thread.
+    await waitFor(() => expect(deleteThread).toHaveBeenCalledWith(5));
   });
 
   it("only promotes answered turns", async () => {
@@ -82,10 +72,20 @@ describe("AIThreadCard promote-to-review-thread (local)", () => {
       props: { thread, repoOwner: "local", repoName: "demo" },
     });
     await fireEvent.click(getByText("Promote to review thread"));
-    expect(createThreads).toHaveBeenCalledWith(
-      [expect.objectContaining({ body: "q1", comments: [{ author: "agent", body: "a1" }] })],
-      "act-immediately",
-    );
+    expect(createThreads).toHaveBeenCalledWith([
+      expect.objectContaining({ body: "q1", comments: [{ author: "agent", body: "a1" }] }),
+    ]);
+  });
+
+  it("does not remove the AI thread if the promote fails", async () => {
+    createThreads.mockResolvedValueOnce(false);
+    state.questions = [done(1, "q1", "a1")];
+    const { getByText } = render(AIThreadCard, {
+      props: { thread, repoOwner: "local", repoName: "demo" },
+    });
+    await fireEvent.click(getByText("Promote to review thread"));
+    await Promise.resolve();
+    expect(deleteThread).not.toHaveBeenCalled();
   });
 
   it("hides the control on remote PRs", () => {
