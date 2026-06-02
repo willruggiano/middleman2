@@ -100,7 +100,11 @@
 
   const stateColors: Record<PRState, string> = {
     open: "var(--accent-green)",
-    draft: "var(--accent-amber)",
+    // Gray draft dot keeps the lifecycle marker visually quiet —
+    // it's the absence of "real" status rather than a state to act
+    // on, and we don't want it to compete with the review chip
+    // labelled "drafts" (your unsaved review comments).
+    draft: "var(--text-muted)",
     closed: "var(--accent-red)",
     merged: "var(--accent-purple)",
   };
@@ -155,16 +159,11 @@
   onclick={onclick}
 >
   <p class="title">
-    <span class="state-dot" style="background: {stateColors[prState]}"></span>
-    {#if prState === "draft"}
-      <span class="draft-chip" title="This PR is still a draft on GitHub">
-        <svg width="10" height="10" viewBox="0 0 16 16" fill="none"
-          stroke="currentColor" stroke-width="2">
-          <circle cx="8" cy="8" r="5.5" stroke-dasharray="2 2" />
-        </svg>
-        draft
-      </span>
-    {/if}
+    <span
+      class="state-dot"
+      style="background: {stateColors[prState]}"
+      title={prState === "draft" ? "Draft PR" : ""}
+    ></span>
     {#if reviewState === "in-review"}
       <span class="review-chip review-chip--inreview" title="You have unsaved draft comments on this PR">drafts</span>
     {:else if reviewState === "responded"}
@@ -330,27 +329,6 @@
     letter-spacing: 0.04em;
     color: #fff;
     background: var(--accent-blue);
-    border-radius: 999px;
-    flex-shrink: 0;
-  }
-
-  /* PR-state chip: this PR is a draft on GitHub. Outlined amber to
-     match the state-dot color, paired with a dashed-circle icon
-     that echoes GitHub's own "draft" affordance. Kept visually
-     distinct from .review-chip--inreview (purple "drafts" — your
-     unsaved review comments) so the two never blur. */
-  .draft-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding: 1px 6px;
-    font-size: 9px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--accent-amber);
-    background: color-mix(in srgb, var(--accent-amber) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--accent-amber) 45%, transparent);
     border-radius: 999px;
     flex-shrink: 0;
   }
