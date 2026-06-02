@@ -205,11 +205,25 @@
   // scroll to the line. Panel is left open by design — the
   // reviewer often wants to step through several drafts in a row.
   async function jumpToDraft(c: DraftComment): Promise<void> {
-    const scope = diffStore.getScope();
-    const alreadyHere = scope.kind === "commit" && scope.sha === c.commitSha;
-    if (c.commitSha && !alreadyHere) {
-      await diffStore.selectCommit(c.commitSha);
-      await tick();
+    // Same scope-routing dance as QuestionsSection: if the draft's
+    // commit is the current PR head, switch to head scope rather
+    // than commit scope (commit scope at the head SHA would show
+    // head^..head, with different line numbers than the base..head
+    // diff the draft was anchored against).
+    if (c.commitSha) {
+      const scope = diffStore.getScope();
+      const commits = diffStore.getCommits();
+      const isCurrentHead = commits && commits.length > 0 && commits[0]!.sha === c.commitSha;
+      const alreadyHeadHere = isCurrentHead && scope.kind === "head";
+      const alreadyCommitHere = scope.kind === "commit" && scope.sha === c.commitSha;
+      if (!alreadyHeadHere && !alreadyCommitHere) {
+        if (isCurrentHead) {
+          await diffStore.resetToHead();
+        } else {
+          await diffStore.selectCommit(c.commitSha);
+        }
+        await tick();
+      }
     }
     if (diffStore.isFileCollapsed(owner, name, number, c.path)) {
       diffStore.toggleFileCollapsed(owner, name, number, c.path);

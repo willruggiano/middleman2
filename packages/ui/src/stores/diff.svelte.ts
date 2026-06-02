@@ -1223,11 +1223,12 @@ export function createDiffStore(opts: DiffStoreOptions) {
     return { kind: diff.interdiff_kind, reason: diff.interdiff_reason ?? "" };
   }
 
-  function resetToHead(): void {
+  function resetToHead(): Promise<void> {
     scope = { kind: "head" };
     if (currentOwner && currentName && currentNumber) {
-      void loadDiff(currentOwner, currentName, currentNumber);
+      return loadDiff(currentOwner, currentName, currentNumber);
     }
+    return Promise.resolve();
   }
 
   // jumpToNextUnreviewed advances to the oldest unreviewed commit newer

@@ -55,20 +55,30 @@
   }
 
   async function scrollToThread(thread: AIThread): Promise<void> {
-    // If the user clicks a thread whose anchor commit isn't the
-    // current diff scope, switch scope to that commit first. Line
-    // numbers in the displayed diff only resolve when the diff is
-    // viewed at the commit the question was asked against; without
-    // this jump the selector below silently misses and the
-    // fallback scrolls the file header — which looks like the
-    // click did nothing.
-    const scope = diffStore.getScope();
-    const alreadyHere = scope.kind === "commit" && scope.sha === thread.commit_sha;
-    if (thread.commit_sha && !alreadyHere) {
-      await diffStore.selectCommit(thread.commit_sha);
-      // selectCommit awaits the diff fetch but DOM hasn't necessarily
-      // committed yet — let the new files render before querying.
-      await tick();
+    // Switch diff scope to the commit the question was anchored on
+    // (if not already there) so line numbers resolve. Subtle bit:
+    // when the question was asked in HEAD scope, thread.commit_sha
+    // is the PR head's SHA — but switching to *commit* scope at
+    // that SHA shows head^..head, not base..head, and the anchor's
+    // line numbers won't match. So if the SHA matches the current
+    // head, route back to HEAD scope; otherwise use commit scope.
+    if (thread.commit_sha) {
+      const scope = diffStore.getScope();
+      const commits = diffStore.getCommits();
+      const isCurrentHead = commits && commits.length > 0 && commits[0]!.sha === thread.commit_sha;
+      const alreadyHeadHere = isCurrentHead && scope.kind === "head";
+      const alreadyCommitHere = scope.kind === "commit" && scope.sha === thread.commit_sha;
+      if (!alreadyHeadHere && !alreadyCommitHere) {
+        if (isCurrentHead) {
+          await diffStore.resetToHead();
+        } else {
+          await diffStore.selectCommit(thread.commit_sha);
+        }
+        // selectCommit/resetToHead awaits the diff fetch but DOM
+        // hasn't necessarily committed yet — let the new files
+        // render before querying.
+        await tick();
+      }
     }
 
     // If the file is collapsed, the .line-wrap nodes aren't in the
