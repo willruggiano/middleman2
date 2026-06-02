@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +36,7 @@ func TestReplyToThreadPostsAgentComment(t *testing.T) {
 
 func TestListThreadsProxiesGet(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/api/v1/repos/local/demo/pulls/7/review-threads", r.URL.Path)
+		assert.Equal(t, "/api/v1/repos/local/demo/pulls/7/review-threads", r.URL.Path)
 		_, _ = w.Write([]byte(`{"threads":[{"id":1,"path":"a.go","line":12,"status":"open"}]}`))
 	}))
 	defer srv.Close()
@@ -68,7 +69,7 @@ func TestToolsCallDispatch(t *testing.T) {
 
 func TestGetThreadFiltersFromList(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/api/v1/repos/local/demo/pulls/7/review-threads", r.URL.Path)
+		assert.Equal(t, "/api/v1/repos/local/demo/pulls/7/review-threads", r.URL.Path)
 		_, _ = w.Write([]byte(`{"threads":[{"id":1,"path":"a.go","line":12},{"id":2,"path":"b.go","line":34}]}`))
 	}))
 	defer srv.Close()
@@ -92,7 +93,7 @@ func TestGetThreadNotFound(t *testing.T) {
 
 func TestGetPullProxiesPullEndpoint(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/api/v1/repos/local/demo/pulls/7", r.URL.Path)
+		assert.Equal(t, "/api/v1/repos/local/demo/pulls/7", r.URL.Path)
 		_, _ = w.Write([]byte(`{"merge_request":{"number":7,"title":"Worktree: feat","head_branch":"feat"}}`))
 	}))
 	defer srv.Close()

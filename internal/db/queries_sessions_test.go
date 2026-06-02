@@ -59,7 +59,7 @@ func TestActiveWorktreeSessionIsBranchScoped(t *testing.T) {
 
 	// No active session on either branch yet.
 	_, err = d.GetActiveWorktreeSession(ctx, w.ID, "a")
-	assert.ErrorIs(err, sql.ErrNoRows)
+	require.ErrorIs(err, sql.ErrNoRows)
 
 	sessA, err := d.CreateWorktreeSession(ctx, w.ID, "a")
 	require.NoError(err)

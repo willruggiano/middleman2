@@ -268,7 +268,7 @@ func TestListReviewThreadsForBranchFiltersAndKeepsLegacy(t *testing.T) {
 		{Path: "c.go", Side: "RIGHT", Line: 3, CommitSHA: "abc", Body: "legacy"},
 	})
 	require.NoError(err)
-	assert.Equal("", legacy[0].Branch)
+	assert.Empty(legacy[0].Branch)
 
 	onA, err := d.ListReviewThreadsForMRBranch(ctx, mrID, "a")
 	require.NoError(err)
@@ -303,7 +303,7 @@ func TestBranchColumnsMigrationApplied(t *testing.T) {
 	require.NoError(d.ReadDB().QueryRowContext(ctx,
 		`SELECT branch FROM middleman_review_threads WHERE id = ?`,
 		threads[0].ID).Scan(&threadBranch))
-	require.Equal("", threadBranch)
+	require.Empty(threadBranch)
 
 	repoID, err := d.UpsertLocalRepo(ctx, "demo")
 	require.NoError(err)
@@ -318,5 +318,5 @@ func TestBranchColumnsMigrationApplied(t *testing.T) {
 	require.NoError(d.ReadDB().QueryRowContext(ctx,
 		`SELECT branch FROM middleman_worktree_sessions WHERE id = ?`,
 		sess.ID).Scan(&sessBranch))
-	require.Equal("", sessBranch)
+	require.Empty(sessBranch)
 }

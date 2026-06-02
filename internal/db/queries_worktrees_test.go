@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -301,5 +300,5 @@ func TestGetActiveWorktreeByPath(t *testing.T) {
 	assert.Equal("local", got.RepoOwner)
 
 	_, err = d.GetActiveWorktreeByPath(ctx, "/code/does-not-exist")
-	assert.True(errors.Is(err, sql.ErrNoRows))
+	require.ErrorIs(err, sql.ErrNoRows)
 }

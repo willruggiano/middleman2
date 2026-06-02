@@ -613,7 +613,7 @@ func formatThreads(ts []ThreadContext) string {
 		if t.Side == "LEFT" {
 			side = "before"
 		}
-		b.WriteString(fmt.Sprintf("- thread %d - %s:%d (%s): %s\n", t.ID, t.Path, t.Line, side, t.RootComment))
+		fmt.Fprintf(&b, "- thread %d - %s:%d (%s): %s\n", t.ID, t.Path, t.Line, side, t.RootComment)
 	}
 	return b.String()
 }

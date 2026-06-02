@@ -37,7 +37,7 @@ func TestCurrentBranch(t *testing.T) {
 	runGitT(t, dir, "checkout", sha)
 	got, err = CurrentBranch(ctx, dir)
 	require.NoError(err)
-	assert.Equal("", got)
+	assert.Empty(got)
 }
 
 func TestCurrentBranchErrorsOnNonRepo(t *testing.T) {
